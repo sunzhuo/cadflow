@@ -1,0 +1,3 @@
+[submodule "cadcraft"]
+	path = cadcraft
+	url = https://github.com/storytold/cadcraft
