@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <title>CADFlow - 数字化工程建模与文档协同平台</title>
+  <link data-trunk rel="rust" data-bin="cadflow-web" data-wasm-opt="0" data-weak-refs />
+  <link data-trunk rel="copy-dir" href="assets" />
+  <link data-trunk rel="copy-file" href="_headers" />
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #22282f;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    }
+    #cadcraft_canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+    #cadcraft_loading {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: #d7dbe0;
+      font-size: 15px;
+      pointer-events: none;
+      z-index: 10;
+    }
+    .cadflow-spinner {
+      width: 48px;
+      height: 48px;
+      border: 3px solid rgba(255, 255, 255, 0.12);
+      border-top-color: #3d8bfd;
+      border-radius: 50%;
+      animation: cf-spin 0.9s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+      margin-bottom: 18px;
+    }
+    @keyframes cf-spin {
+      to { transform: rotate(360deg); }
+    }
+    .loading-title {
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      margin-bottom: 6px;
+      color: #f0f3f6;
+    }
+    .loading-sub {
+      font-size: 13px;
+      color: #8c95a0;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="cadcraft_canvas"></canvas>
+  <div id="cadcraft_loading">
+    <div class="cadflow-spinner"></div>
+    <div class="loading-title">CADFlow</div>
+    <div class="loading-sub">正在加载 WebAssembly 核心与中文字体...</div>
+  </div>
+</body>
+</html>
+

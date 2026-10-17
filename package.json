@@ -1,0 +1,17 @@
+{
+  "name": "cadflow",
+  "version": "1.0.0",
+  "description": "CADFlow - Web CAD with Markdown Documentation on Cloudflare Pages",
+  "private": true,
+  "scripts": {
+    "build": "powershell -Command \"Set-Location cadflow-web; trunk build --release\"",
+    "build:dev": "powershell -Command \"Set-Location cadflow-web; trunk build\"",
+    "serve": "powershell -Command \"Set-Location cadflow-web; trunk serve\"",
+    "deploy": "npx wrangler pages deploy dist --project-name cadflow --commit-dirty=true",
+    "deploy:preview": "npx wrangler pages deploy dist --project-name cadflow --branch preview --commit-dirty=true"
+  },
+  "devDependencies": {
+    "wrangler": "^4.151.1"
+  }
+}
+

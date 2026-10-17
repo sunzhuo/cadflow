@@ -1,0 +1,36 @@
+[package]
+name = "cadflow-web"
+description = "CADFlow in the browser - Web CAD with Markdown Documentation"
+version = "0.7.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[[bin]]
+name = "cadflow-web"
+path = "src/main.rs"
+
+[dependencies]
+cadcraft-engine = { path = "../cadcraft/crates/engine" }
+cadcraft-ui-egui = { path = "../cadcraft/crates/ui-egui" }
+cadcraft-io = { path = "../cadcraft/crates/io" }
+craft-ui = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "5c874d51eeb3de70e735c8ce87a59a7dedd47675", features = ["serde"] }
+egui = "0.36"
+log = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["float_roundtrip"] }
+
+[target.wasm32-unknown-unknown.dependencies]
+web-sys = { version = "0.3", features = ["HtmlInputElement", "FileList", "File"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+eframe = { version = "0.36", default-features = false, features = ["persistence", "default_fonts", "wgpu", "accesskit"] }
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = [
+    "Window", "Document", "Element", "HtmlElement", "HtmlCanvasElement",
+    "HtmlAnchorElement", "Location", "Navigator", "Blob", "BlobPropertyBag",
+    "Url", "MessageEvent", "UrlSearchParams", "MediaQueryList", "Response"
+] }
+
