@@ -82,7 +82,11 @@ mod web {
         }
 
         fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-            // 顶部渲染 Buerligons 风格工具栏 (固定 48px 高，含 MENU 折叠多级菜单、撤销/重做、绘图工具区)
+            // 隐藏 cadcraft 原生工具栏与独立横向菜单栏，统一使用 Buerligons 48px 顶部工具栏与左侧折叠菜单
+            self.app.ui.show_toolbar = false;
+            self.app.ui.in_window_menu = false;
+
+            // 顶部渲染 Buerligons 风格工具栏 (固定 48px 高，含 CADCraft 全部菜单项折叠菜单与全部原生工具栏图标)
             crate::buerligons::draw_top_toolbar(ui, &mut self.app);
 
             // 右侧文档面板：无尺寸限制（max_width 为无限大）
