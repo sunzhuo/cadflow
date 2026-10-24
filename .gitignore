@@ -1,3 +1,5 @@
 /target/
 /.wrangler/
 **/*.rs.bk
+.gemini/
+.bin/
