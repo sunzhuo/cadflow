@@ -6,6 +6,8 @@
 #[cfg(target_arch = "wasm32")]
 pub mod download;
 #[cfg(target_arch = "wasm32")]
+pub mod buerligons;
+#[cfg(target_arch = "wasm32")]
 pub mod doc_panel;
 #[cfg(target_arch = "wasm32")]
 mod host;
@@ -80,6 +82,9 @@ mod web {
         }
 
         fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+            // 顶部渲染 Buerligons 风格工具栏 (固定 48px 高，含 MENU 折叠多级菜单、撤销/重做、绘图工具区)
+            crate::buerligons::draw_top_toolbar(ui, &mut self.app);
+
             // 右侧文档面板：无尺寸限制（max_width 为无限大）
             if self.show_doc_panel {
                 egui::Panel::right("cadflow_document_side_panel")
@@ -158,7 +163,7 @@ mod web {
         };
         let root = Node::Split {
             axis: SplitAxis::Horizontal,
-            size: SplitSize::FixedFirst(280.0),
+            size: SplitSize::FixedFirst(288.0),
             first: Box::new(left_side),
             second: Box::new(Node::Tabs {
                 panels: vec![Panel::Canvas],
@@ -225,6 +230,10 @@ mod web {
                     Box::new(move |cc| {
                         let session = if app_bridge.is_some() { Session::empty() } else { Session::new() };
                         let mut app = CadApp::new(session, services());
+
+                        // 隐藏原生工具栏与独立菜单栏，统一使用外层 Buerligons 48px 顶部工具栏与折叠菜单
+                        app.ui.show_toolbar = false;
+                        app.ui.in_window_menu = false;
 
                         // 设置中文界面及系统语言首选项
                         app.ui.interface_language = cadcraft_ui_egui::i18n::Preference::Chinese;
