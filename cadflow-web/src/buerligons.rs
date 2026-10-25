@@ -108,8 +108,6 @@ pub fn draw_collapsed_menu(
     ui: &mut Ui,
     app: &mut CadApp,
     show_help_dialog: &mut bool,
-    show_inspector: &mut bool,
-    show_style_editor: &mut bool,
 ) {
     let t = Tokens::get();
 
@@ -151,30 +149,6 @@ pub fn draw_collapsed_menu(
                     clicked = Some("cadflow_help".into());
                     ui.close();
                 }
-            } else if *name == "Window" {
-                ui.menu_button(name_tr, |ui| {
-                    ui.set_min_width(148.0);
-                    for e in entries {
-                        render_menu_entry(ui, e, &mut clicked);
-                    }
-                    let extra_entries = [
-                        Entry::Item {
-                            label: "Inspector".into(),
-                            id: "cadflow_inspector".into(),
-                            shortcut: None,
-                            enabled: true,
-                        },
-                        Entry::Item {
-                            label: "Style Editor".into(),
-                            id: "cadflow_style_editor".into(),
-                            shortcut: None,
-                            enabled: true,
-                        },
-                    ];
-                    for e in &extra_entries {
-                        render_menu_entry(ui, e, &mut clicked);
-                    }
-                });
             } else {
                 ui.menu_button(name_tr, |ui| {
                     ui.set_min_width(148.0);
@@ -196,10 +170,6 @@ pub fn draw_collapsed_menu(
     if let Some(id) = clicked {
         if id == "cadflow_help" {
             *show_help_dialog = true;
-        } else if id == "cadflow_inspector" {
-            *show_inspector = !*show_inspector;
-        } else if id == "cadflow_style_editor" {
-            *show_style_editor = !*show_style_editor;
         } else {
             menus::activate(app, &id);
         }
@@ -325,8 +295,6 @@ pub fn draw_top_toolbar(
     doc_width: &mut f32,
     doc_state: &mut crate::doc_panel::DocState,
     show_help_dialog: &mut bool,
-    show_inspector: &mut bool,
-    show_style_editor: &mut bool,
 ) {
     let t = Tokens::get();
     let mac = ui.ctx().os().is_mac();
@@ -362,7 +330,7 @@ pub fn draw_top_toolbar(
                     vec2(96.0, TOOL_SIZE),
                 )),
                 |ui| {
-                    draw_collapsed_menu(ui, app, show_help_dialog, show_inspector, show_style_editor);
+                    draw_collapsed_menu(ui, app, show_help_dialog);
                 },
             );
             cursor_x += 96.0 + TOOL_SPACING;

@@ -33,8 +33,6 @@ pub fn tr_ui(key: &str) -> String {
     }
     match key {
         "Properties" => "特性",
-        "Inspector" => "检查器 (Inspector)",
-        "Style Editor" => "样式编辑器 (Style Editor)",
         "No selection" => "未选择",
         "Color" => "颜色",
         "Layer" => "图层",
@@ -145,7 +143,7 @@ impl Default for SidebarState {
             active_tab: SidebarTopTab::ToolSets,
             toolset_subtab: "Drafting".to_string(),
             collapsed_categories: Vec::new(),
-            properties_height: 280.0,
+            properties_height: 0.0,
             show_layer_list: false,
         }
     }
@@ -155,11 +153,17 @@ impl SidebarState {
     pub fn ui(&mut self, ui: &mut Ui, app: &mut CadApp) {
         let t = Tokens::get();
         let total_h = ui.available_height();
+        let sep_h = 6.0;
+        let available_h = (total_h - sep_h).max(200.0);
 
-        // 限制特性面板高度并计算上下部分分配 (Req 7: 高度可调整)
-        let prop_h = self.properties_height.clamp(100.0, (total_h - 160.0).max(100.0));
+        // 默认将工具集面板和特性面板高度均分 (各占 50%)
+        if self.properties_height <= 0.0 {
+            self.properties_height = available_h * 0.5;
+        }
+
+        let prop_h = self.properties_height.clamp(100.0, (available_h - 100.0).max(100.0));
         self.properties_height = prop_h;
-        let top_h = (total_h - prop_h - 6.0).max(120.0);
+        let top_h = available_h - prop_h;
 
         // --------------------------------------------------------------------
         // 1. 上半部分：[工具集] [图层] [块] [组] 4个标签页
@@ -168,6 +172,8 @@ impl SidebarState {
             vec2(ui.available_width(), top_h),
             egui::Layout::top_down(egui::Align::Min),
             |ui| {
+                ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+
                 // 顶部标签切换栏 (高度 28px，严格参考 CADCraft 工具集样式，无蓝色下划线)
                 let tab_h = 28.0;
                 let full_w = ui.available_width();
@@ -200,7 +206,7 @@ impl SidebarState {
                         tr.center(),
                         egui::Align2::CENTER_CENTER,
                         *label,
-                        egui::FontId::proportional(13.0),
+                        egui::FontId::proportional(14.0),
                         if is_active { t.text } else { t.text_dim },
                     );
 
@@ -213,9 +219,7 @@ impl SidebarState {
                     self.active_tab = tab;
                 }
 
-                // 主标签与子标签之间没有横线 (Req 1)
-
-                // 标签页内容
+                // 标签页内容 (与主标签紧密相连无缝隙)
                 match self.active_tab {
                     SidebarTopTab::ToolSets => self.render_toolsets(ui, app),
                     SidebarTopTab::Layers => self.render_layers(ui, app),
@@ -226,9 +230,9 @@ impl SidebarState {
         );
 
         // --------------------------------------------------------------------
-        // 2. 中间水平分割拖拽条 (Req 7: 调整特性面板高度)
+        // 2. 中间水平分割拖拽条 (调整特性面板与工具集面板高度比例)
         // --------------------------------------------------------------------
-        let (sep_rect, sep_resp) = ui.allocate_exact_size(vec2(ui.available_width(), 6.0), Sense::drag());
+        let (sep_rect, sep_resp) = ui.allocate_exact_size(vec2(ui.available_width(), sep_h), Sense::drag());
         let is_sep_hover = sep_resp.hovered() || sep_resp.dragged();
 
         if is_sep_hover {
@@ -250,12 +254,32 @@ impl SidebarState {
         );
 
         // --------------------------------------------------------------------
-        // 3. 下半部分：完整 CADCraft 特性面板 (Properties，翻译为中文)
+        // 3. 下半部分：完整 CADCraft 特性面板 (Properties，包含主标签页 [特性]，均分高度)
         // --------------------------------------------------------------------
         ui.allocate_ui_with_layout(
-            vec2(ui.available_width(), self.properties_height),
+            vec2(ui.available_width(), prop_h),
             egui::Layout::top_down(egui::Align::Min),
             |ui| {
+                ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+
+                // 特性面板主标签栏 (高度 28px，严格参考 CADCraft 停靠标签样式)
+                let tab_h = 28.0;
+                let full_w = ui.available_width();
+                let (tabs_rect, _) = ui.allocate_exact_size(vec2(full_w, tab_h), Sense::hover());
+                let p = ui.painter();
+                p.rect_filled(tabs_rect, 0.0, t.chrome);
+
+                let tab_w = 72.0;
+                let tr = Rect::from_min_size(tabs_rect.min, vec2(tab_w, tab_h));
+                p.rect_filled(tr, 0.0, t.tab_active);
+                p.text(
+                    tr.center(),
+                    egui::Align2::CENTER_CENTER,
+                    tr_ui("Properties"),
+                    egui::FontId::proportional(14.0),
+                    t.text,
+                );
+
                 self.render_properties(ui, app);
             },
         );
@@ -289,7 +313,7 @@ impl SidebarState {
                 sub_tr.center(),
                 egui::Align2::CENTER_CENTER,
                 label,
-                egui::FontId::proportional(12.5),
+                egui::FontId::proportional(13.5),
                 if is_active { t.text } else { t.text_dim },
             );
 
@@ -335,9 +359,11 @@ impl SidebarState {
                         pos2(hr.left() + 22.0, hr.center().y),
                         egui::Align2::LEFT_CENTER,
                         tr_ui(name),
-                        cadcraft_ui_egui::theme::body(),
+                        egui::FontId::proportional(13.5),
                         t.text,
                     );
+                    let gear = Rect::from_center_size(pos2(hr.right() - 12.0, hr.center().y), vec2(13.0, 13.0));
+                    icons::paint(pp, Rect::from_center_size(gear.center(), vec2(11.0, 11.0)), Icon::Gear, false);
 
                     if hresp.clicked() {
                         if collapsed {
@@ -455,7 +481,7 @@ impl SidebarState {
                             x += 18.0;
                         }
                         swatch(p, Rect::from_min_size(pos2(x + 2.0, rect.top() + 7.0), vec2(10.0, 10.0)), *color);
-                        p.text(pos2(x + 18.0, rect.center().y), egui::Align2::LEFT_CENTER, name, cadcraft_ui_egui::theme::body(), t.text);
+                        p.text(pos2(x + 18.0, rect.center().y), egui::Align2::LEFT_CENTER, name, egui::FontId::proportional(13.5), t.text);
                     }
                     icons::paint(p, Rect::from_center_size(pos2(rect.right() - 12.0, rect.center().y), vec2(12.0, 12.0)), Icon::ChevronDown, false);
 
@@ -496,7 +522,7 @@ impl SidebarState {
                         pos2(rect.left() + 8.0, rect.center().y),
                         egui::Align2::LEFT_CENTER,
                         cadcraft_ui_egui::i18n::t("Unsaved Layer State"),
-                        cadcraft_ui_egui::theme::body(),
+                        egui::FontId::proportional(13.5),
                         t.text,
                     );
                     icons::paint(ui.painter(), Rect::from_center_size(pos2(rect.right() - 12.0, rect.center().y), vec2(12.0, 12.0)), Icon::ChevronDown, false);
@@ -519,7 +545,7 @@ impl SidebarState {
                         pos2(rect.left() + 20.0, rect.center().y),
                         egui::Align2::LEFT_CENTER,
                         cadcraft_ui_egui::i18n::t(label),
-                        cadcraft_ui_egui::theme::body(),
+                        egui::FontId::proportional(13.5),
                         t.text,
                     );
                     if resp.clicked() {
@@ -659,7 +685,7 @@ impl SidebarState {
             pos2(hr.left() + 8.0, hr.center().y),
             egui::Align2::LEFT_CENTER,
             tr_ui("Properties"),
-            cadcraft_ui_egui::theme::body(),
+            egui::FontId::proportional(14.0),
             t.text,
         );
 
@@ -669,8 +695,8 @@ impl SidebarState {
         let half = Rect::from_min_size(seg.min, vec2(30.0, 18.0));
         let my = half.translate(vec2(30.0, 0.0));
         ui.painter().rect_filled(if app.ui.properties_all { half } else { my }, 3.0, t.control);
-        ui.painter().text(half.center(), egui::Align2::CENTER_CENTER, tr_ui("All"), cadcraft_ui_egui::theme::small(), t.text);
-        ui.painter().text(my.center(), egui::Align2::CENTER_CENTER, tr_ui("My"), cadcraft_ui_egui::theme::small(), t.text_faint);
+        ui.painter().text(half.center(), egui::Align2::CENTER_CENTER, tr_ui("All"), egui::FontId::proportional(12.5), t.text);
+        ui.painter().text(my.center(), egui::Align2::CENTER_CENTER, tr_ui("My"), egui::FontId::proportional(12.5), t.text_faint);
 
         // 选择集摘要与工具栏按钮
         let mut types: Vec<(&'static str, Vec<String>)> = Vec::new();
@@ -697,7 +723,7 @@ impl SidebarState {
             let w = (ui.available_width() - 84.0).max(60.0);
             let (rect, resp) = ui.allocate_exact_size(vec2(w, 20.0), Sense::click());
             ui.painter().rect_filled(rect, 3.0, t.control);
-            ui.painter().text(pos2(rect.left() + 6.0, rect.center().y), egui::Align2::LEFT_CENTER, &header_label, cadcraft_ui_egui::theme::small(), t.text);
+            ui.painter().text(pos2(rect.left() + 6.0, rect.center().y), egui::Align2::LEFT_CENTER, &header_label, egui::FontId::proportional(13.0), t.text);
 
             if count > 0 {
                 egui::Popup::from_toggle_button_response(&resp)
@@ -949,13 +975,13 @@ impl SidebarState {
 
     fn section_divider(&self, ui: &mut Ui, title: &str) {
         let t = Tokens::get();
-        let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 18.0), Sense::hover());
+        let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 20.0), Sense::hover());
         ui.painter().rect_filled(r.shrink2(vec2(4.0, 1.0)), 2.0, t.chrome_dark);
         ui.painter().text(
             pos2(r.left() + 10.0, r.center().y),
             egui::Align2::LEFT_CENTER,
             tr_ui(title),
-            cadcraft_ui_egui::theme::small(),
+            egui::FontId::proportional(13.0),
             t.text_dim,
         );
     }
@@ -965,7 +991,7 @@ impl SidebarState {
         ui.horizontal(|ui| {
             let mut job = egui::text::LayoutJob::simple(
                 tr_ui(label),
-                cadcraft_ui_egui::theme::body(),
+                egui::FontId::proportional(13.5),
                 t.text_dim,
                 96.0,
             );
