@@ -6,8 +6,8 @@
   <title>CADFlow - 数字化工程建模与文档协同平台</title>
   
 <script type="module">
-import init, * as bindings from './cadflow-web-3578c7be3a6cfeb3.js';
-const wasm = await init({ module_or_path: './cadflow-web-3578c7be3a6cfeb3_bg.wasm' });
+import init, * as bindings from './cadflow-web-136c17fa1c85ab0b.js';
+const wasm = await init({ module_or_path: './cadflow-web-136c17fa1c85ab0b_bg.wasm' });
 
 
 window.wasmBindings = bindings;
@@ -70,7 +70,7 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
       color: #8c95a0;
     }
   </style>
-<link rel="modulepreload" href="./cadflow-web-3578c7be3a6cfeb3.js" crossorigin="anonymous" integrity="sha384-scf0lFC8ZpsKEb0F5KIKb6mXrgRIyOXK/TZIvsF/1OG3884kavXnh1Hj8XfjQ9XB"><link rel="preload" href="./cadflow-web-3578c7be3a6cfeb3_bg.wasm" crossorigin="anonymous" integrity="sha384-MRTiN2UC6IaCQe4C37FLcJGrOOUEHpsxAecRta4bNk7zUl65R8A/q9f8xMIWaY2W" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="./cadflow-web-136c17fa1c85ab0b.js" crossorigin="anonymous" integrity="sha384-N1sHJAJChodxS9quuZo1UKmT4cr0fUVZd9KvPeQqKEKF3nwUXEpIwOlYy8tfGqbt"><link rel="preload" href="./cadflow-web-136c17fa1c85ab0b_bg.wasm" crossorigin="anonymous" integrity="sha384-d9YfFJb3EvEqXRefaRvEv1nWNIdp1nd1QNyD13sZYoESohIIigDI6tYzEocsoCP+" as="fetch" type="application/wasm"></head>
 <body>
   <canvas id="cadcraft_canvas"></canvas>
   <div id="cadcraft_loading">

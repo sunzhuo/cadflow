@@ -25,7 +25,110 @@ pub enum SidebarTopTab {
     Groups,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+/// 本地化翻译辅助函数（优先查 CADCraft zh.tsv 语言包，兼顾常见属性术语回退，Req 5）
+pub fn tr_ui(key: &str) -> String {
+    let t_str = cadcraft_ui_egui::i18n::t(key);
+    if t_str != key {
+        return t_str.to_string();
+    }
+    match key {
+        "Properties" => "特性",
+        "No selection" => "未选择",
+        "Color" => "颜色",
+        "Layer" => "图层",
+        "Linetype" => "线型",
+        "Linetype scale" => "线型比例",
+        "Lineweight" => "线宽",
+        "Transparency" => "透明度",
+        "Thickness" => "厚度",
+        "Text style" => "文字样式",
+        "Dimension style" => "标注样式",
+        "Multileader style" => "多重引线样式",
+        "Table style" => "表格样式",
+        "Annotation scale" => "注释比例",
+        "Text height" => "文字高度",
+        "Plot style" => "打印样式",
+        "Plot style table" => "打印样式表",
+        "Plot table type" => "打印表类型",
+        "Not available" => "不可用",
+        "General" => "常规",
+        "Geometry" => "几何图形",
+        "Misc" => "其他",
+        "Start X" => "起点 X",
+        "Start Y" => "起点 Y",
+        "End X" => "端点 X",
+        "End Y" => "端点 Y",
+        "Delta X" => "增量 X",
+        "Delta Y" => "增量 Y",
+        "Length" => "长度",
+        "Angle" => "角度",
+        "Center X" => "圆心 X",
+        "Center Y" => "圆心 Y",
+        "Radius" => "半径",
+        "Diameter" => "直径",
+        "Circumference" => "周长",
+        "Area" => "面积",
+        "Start angle" => "起始角度",
+        "End angle" => "终止角度",
+        "Contents" => "内容",
+        "Height" => "高度",
+        "Type" => "类型",
+        "All" => "全部",
+        "My" => "我的",
+        "Draw" => "绘图",
+        "Hatch" => "图案填充",
+        "Block" => "块",
+        "Modify" => "修改",
+        "Text" => "文字",
+        "Dimension" => "标注",
+        "Leader" => "引线",
+        "Table" => "表格",
+        "Parametric" => "参数化",
+        "Drafting" => "绘图",
+        "Modeling" => "建模",
+        "Tool Sets" => "工具集",
+        "Layers" => "图层",
+        "Blocks" => "块",
+        "Groups" => "组",
+        "File" => "文件",
+        "Edit" => "编辑",
+        "View" => "视图",
+        "Insert" => "插入",
+        "Format" => "格式",
+        "Tools" => "工具",
+        "Window" => "窗口",
+        "Help" => "帮助",
+        "Undo" => "放弃",
+        "Redo" => "重做",
+        "New..." | "New Drawing" => "新建图形...",
+        "Open..." | "Open Drawing" => "打开...",
+        "Save" => "保存",
+        "Save As..." => "另存为...",
+        "Print..." => "打印...",
+        "Export..." => "导出...",
+        "Cut" => "剪切",
+        "Copy" => "复制",
+        "Paste" => "粘贴",
+        "Erase" => "删除",
+        "Select All" => "全选",
+        "Zoom Extents" => "范围缩放",
+        "Zoom Window" => "窗口缩放",
+        "Pan" => "平移",
+        "Show Layer List" => "显示图层列表",
+        "Hide Layer List" => "隐藏图层列表",
+        "Unsaved Layer State" => "未保存的图层状态",
+        "Search for layer" => "搜索图层",
+        "Name" => "名称",
+        "On" => "开",
+        "Freeze" => "冻结",
+        "Lock" => "锁定",
+        "Plot" => "打印",
+        "VP Freeze" => "视口冻结",
+        "VP Color" => "视口颜色",
+        _ => key,
+    }.to_string()
+}
+
 pub struct SidebarState {
     pub active_tab: SidebarTopTab,
     pub toolset_subtab: String,
@@ -108,8 +211,7 @@ impl SidebarState {
                     self.active_tab = tab;
                 }
 
-                // 分割线
-                p.hline(tabs_rect.x_range(), tabs_rect.bottom(), Stroke::new(1.0, t.border));
+                // 主标签与子标签之间没有横线 (Req 1)
 
                 // 标签页内容
                 match self.active_tab {
@@ -171,7 +273,7 @@ impl SidebarState {
         p.rect_filled(sub_rect, 0.0, t.chrome);
 
         let sub_w = 72.0;
-        let mut sub_x = sub_rect.left() + 4.0;
+        let mut sub_x = sub_rect.left();
         let subtabs = [("Drafting", "绘图"), ("Modeling", "建模")];
         let mut clicked_sub = None;
 
@@ -199,8 +301,7 @@ impl SidebarState {
             self.toolset_subtab = sub;
         }
 
-        // 分割线
-        p.hline(sub_rect.x_range(), sub_rect.bottom(), Stroke::new(1.0, t.border));
+        // 子标签和下面的面板内容之间没有横线 (Req 1)
 
         // 工具列表滚动区域
         let groups = if self.toolset_subtab == "Drafting" {
@@ -231,14 +332,9 @@ impl SidebarState {
                     pp.text(
                         pos2(hr.left() + 22.0, hr.center().y),
                         egui::Align2::LEFT_CENTER,
-                        cadcraft_ui_egui::i18n::t(name),
+                        tr_ui(name),
                         cadcraft_ui_egui::theme::body(),
                         t.text,
-                    );
-                    pp.hline(
-                        (hr.left() + 18.0 + 80.0)..=hr.right() - 8.0,
-                        hr.center().y,
-                        Stroke::new(1.0, t.border.gamma_multiply(0.4)),
                     );
 
                     if hresp.clicked() {
@@ -249,31 +345,33 @@ impl SidebarState {
                         }
                     }
 
-                    if collapsed {
-                        continue;
+                    if !collapsed {
+                        // 工具图标网格
+                        ui.allocate_ui_with_layout(
+                            vec2(ui.available_width(), 0.0),
+                            egui::Layout::left_to_right(egui::Align::Min).with_main_wrap(true),
+                            |ui| {
+                                ui.spacing_mut().item_spacing = vec2(2.0, 2.0);
+                                ui.add_space(8.0);
+
+                                for &(icon, id, label) in *large {
+                                    if icons::button(ui, icon, 28.0, &tr_ui(label), false).clicked() {
+                                        start_cmd = Some(id);
+                                    }
+                                }
+                                for &(icon, id, label) in *small {
+                                    if icons::button(ui, icon, 28.0, &tr_ui(label), false).clicked() {
+                                        start_cmd = Some(id);
+                                    }
+                                }
+                            },
+                        );
+                        ui.add_space(6.0);
                     }
 
-                    // 工具图标网格
-                    ui.allocate_ui_with_layout(
-                        vec2(ui.available_width(), 0.0),
-                        egui::Layout::left_to_right(egui::Align::Min).with_main_wrap(true),
-                        |ui| {
-                            ui.spacing_mut().item_spacing = vec2(2.0, 2.0);
-                            ui.add_space(8.0);
-
-                            for &(icon, id, label) in *large {
-                                if icons::button(ui, icon, 28.0, cadcraft_ui_egui::i18n::t(label), false).clicked() {
-                                    start_cmd = Some(id);
-                                }
-                            }
-                            for &(icon, id, label) in *small {
-                                if icons::button(ui, icon, 28.0, cadcraft_ui_egui::i18n::t(label), false).clicked() {
-                                    start_cmd = Some(id);
-                                }
-                            }
-                        },
-                    );
-                    ui.add_space(6.0);
+                    // 面板内容之间的横线跟原始 toolsets 面板一致 (Req 1)
+                    let (sr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
+                    ui.painter().hline(sr.x_range().shrink(6.0), sr.center().y, Stroke::new(1.0, t.border));
                 }
             });
 
@@ -558,7 +656,7 @@ impl SidebarState {
         ui.painter().text(
             pos2(hr.left() + 8.0, hr.center().y),
             egui::Align2::LEFT_CENTER,
-            cadcraft_ui_egui::i18n::t("Properties"),
+            tr_ui("Properties"),
             cadcraft_ui_egui::theme::body(),
             t.text,
         );
@@ -569,8 +667,8 @@ impl SidebarState {
         let half = Rect::from_min_size(seg.min, vec2(30.0, 18.0));
         let my = half.translate(vec2(30.0, 0.0));
         ui.painter().rect_filled(if app.ui.properties_all { half } else { my }, 3.0, t.control);
-        ui.painter().text(half.center(), egui::Align2::CENTER_CENTER, cadcraft_ui_egui::i18n::t("All"), cadcraft_ui_egui::theme::small(), t.text);
-        ui.painter().text(my.center(), egui::Align2::CENTER_CENTER, cadcraft_ui_egui::i18n::t("My"), cadcraft_ui_egui::theme::small(), t.text_faint);
+        ui.painter().text(half.center(), egui::Align2::CENTER_CENTER, tr_ui("All"), cadcraft_ui_egui::theme::small(), t.text);
+        ui.painter().text(my.center(), egui::Align2::CENTER_CENTER, tr_ui("My"), cadcraft_ui_egui::theme::small(), t.text_faint);
 
         // 选择集摘要与工具栏按钮
         let mut types: Vec<(&'static str, Vec<String>)> = Vec::new();
@@ -585,10 +683,10 @@ impl SidebarState {
         }
         let count: usize = types.iter().map(|(_, hs)| hs.len()).sum();
         let header_label = match (count, types.as_slice()) {
-            (0, _) => cadcraft_ui_egui::i18n::t("No selection").to_string(),
-            (1, [(n, _)]) => cadcraft_ui_egui::i18n::t(n).to_string(),
-            (n, [(ty, _)]) => format!("{} ({n})", cadcraft_ui_egui::i18n::t(ty)),
-            (n, _) => format!("{} ({n})", cadcraft_ui_egui::i18n::t("All")),
+            (0, _) => tr_ui("No selection"),
+            (1, [(n, _)]) => tr_ui(n),
+            (n, [(ty, _)]) => format!("{} ({n})", tr_ui(ty)),
+            (n, _) => format!("{} ({n})", tr_ui("All")),
         };
 
         ui.horizontal(|ui| {
@@ -766,10 +864,10 @@ impl SidebarState {
                     });
 
                     self.prop_row_custom(ui, "Plot style", |ui| {
-                        ui.label(cadcraft_ui_egui::i18n::t("ByColor"));
+                        ui.label(tr_ui("ByColor"));
                     });
                     self.prop_row_custom(ui, "Plot style table", |ui| {
-                        ui.label(cadcraft_ui_egui::i18n::t("None"));
+                        ui.label(tr_ui("None"));
                     });
                 } else {
                     // 选中图元时的常规属性与几何属性
@@ -781,19 +879,19 @@ impl SidebarState {
                         self.section_divider(ui, "General");
 
                         self.prop_row_custom(ui, "Color", |ui| {
-                            ui.label(cadcraft_ui_egui::i18n::t(&e.common.color.name()));
+                            ui.label(tr_ui(&e.common.color.name()));
                         });
                         self.prop_row_custom(ui, "Layer", |ui| {
                             ui.label(&e.common.layer);
                         });
                         self.prop_row_custom(ui, "Linetype", |ui| {
-                            ui.label(cadcraft_ui_egui::i18n::t(&e.common.linetype));
+                            ui.label(tr_ui(&e.common.linetype));
                         });
                         self.prop_row_custom(ui, "Linetype scale", |ui| {
                             ui.label(format!("{:.4}", e.common.ltscale));
                         });
                         self.prop_row_custom(ui, "Lineweight", |ui| {
-                            ui.label(cadcraft_ui_egui::i18n::t(&e.common.lineweight.name()));
+                            ui.label(tr_ui(&e.common.lineweight.name()));
                         });
 
                         // 几何分组 (单选图元时展示具体几何参数)
@@ -831,7 +929,7 @@ impl SidebarState {
                                     self.prop_row_custom(ui, "Contents", |ui| { ui.label(&tx.contents); });
                                 }
                                 _ => {
-                                    self.prop_row_custom(ui, "Type", |ui| { ui.label(cadcraft_ui_egui::i18n::t(e.kind.type_name())); });
+                                    self.prop_row_custom(ui, "Type", |ui| { ui.label(tr_ui(e.kind.type_name())); });
                                 }
                             }
                         }
@@ -854,7 +952,7 @@ impl SidebarState {
         ui.painter().text(
             pos2(r.left() + 10.0, r.center().y),
             egui::Align2::LEFT_CENTER,
-            cadcraft_ui_egui::i18n::t(title),
+            tr_ui(title),
             cadcraft_ui_egui::theme::small(),
             t.text_dim,
         );
@@ -864,7 +962,7 @@ impl SidebarState {
         let t = Tokens::get();
         ui.horizontal(|ui| {
             let mut job = egui::text::LayoutJob::simple(
-                cadcraft_ui_egui::i18n::t(label).to_string(),
+                tr_ui(label),
                 cadcraft_ui_egui::theme::body(),
                 t.text_dim,
                 96.0,

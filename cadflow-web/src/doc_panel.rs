@@ -152,32 +152,41 @@ impl DocState {
         let t = cadcraft_ui_egui::theme::Tokens::get();
         let p = ui.painter().clone();
 
-        // 1. 最上方“文档”主标签与“编辑/预览”子标签栏 (高度 28px，严格参考 CADCraft 工具集样式)
-        let tab_h = 28.0;
+        // --------------------------------------------------------------------
+        // 1. 第一行：“文档”主标签栏 (高度 28px，严格参考 CADCraft 工具集主标签样式，Req 7, 9)
+        // --------------------------------------------------------------------
+        let main_h = 28.0;
         let full_w = ui.available_width();
-        let (tab_bar_rect, _) = ui.allocate_exact_size(vec2(full_w, tab_h), Sense::hover());
-        p.rect_filled(tab_bar_rect, 0.0, t.chrome);
+        let (main_bar_rect, _) = ui.allocate_exact_size(vec2(full_w, main_h), Sense::hover());
+        p.rect_filled(main_bar_rect, 0.0, t.chrome);
 
-        // “文档”主标题标签 (固定宽 76px，显示当前处于文档侧边栏)
+        // “文档”主标题标签 (固定宽 76px，背景为 tab_active，文字为 text)
         let doc_title_w = 76.0;
-        let title_rect = Rect::from_min_size(tab_bar_rect.min, vec2(doc_title_w, tab_h));
+        let title_rect = Rect::from_min_size(main_bar_rect.min, vec2(doc_title_w, main_h));
         p.rect_filled(title_rect, 0.0, t.tab_active);
         p.text(
             title_rect.center(),
             egui::Align2::CENTER_CENTER,
             "文档",
-            egui::FontId::proportional(13.5),
+            egui::FontId::proportional(13.0),
             t.text,
         );
 
-        // “编辑”与“预览”子标签
+        // --------------------------------------------------------------------
+        // 2. 第二行：“编辑”与“预览”子标签栏 (位于“文档”主标签下方，高度 26px，Req 7)
+        //    主标签与子标签之间没有横线 (Req 1)
+        // --------------------------------------------------------------------
+        let sub_h = 26.0;
+        let (sub_bar_rect, _) = ui.allocate_exact_size(vec2(full_w, sub_h), Sense::hover());
+        p.rect_filled(sub_bar_rect, 0.0, t.chrome);
+
         let subtabs = [(DocSubTab::Edit, "编辑"), (DocSubTab::Preview, "预览")];
-        let sub_w = 64.0;
-        let mut x = title_rect.right() + 4.0;
+        let sub_w = 72.0;
+        let mut sub_x = sub_bar_rect.left();
         let mut clicked_sub = None;
 
         for (variant, label) in subtabs {
-            let tr = Rect::from_min_size(pos2(x, tab_bar_rect.top()), vec2(sub_w, tab_h));
+            let tr = Rect::from_min_size(pos2(sub_x, sub_bar_rect.top() + 1.0), vec2(sub_w, sub_h - 2.0));
             let active = self.sub_tab == variant;
             let resp = ui.interact(tr, ui.id().with(("doc_subtab", label)), Sense::click());
 
@@ -186,35 +195,42 @@ impl DocState {
                 tr.center(),
                 egui::Align2::CENTER_CENTER,
                 label,
-                egui::FontId::proportional(13.0),
+                egui::FontId::proportional(12.5),
                 if active { t.text } else { t.text_dim },
             );
 
             if resp.clicked() {
                 clicked_sub = Some(variant);
             }
-            x += sub_w;
+            sub_x += sub_w + 4.0;
         }
 
         if let Some(st) = clicked_sub {
             self.sub_tab = st;
         }
 
-        // 分隔线
-        p.hline(tab_bar_rect.x_range(), tab_bar_rect.bottom(), Stroke::new(1.0, t.border));
+        // 子标签和下面的面板内容之间没有横线 (Req 1)
 
-        // 2. 文档内容区域（纯白色背景，包含编辑框或原生 CommonMark 渲染器）
-        let content_rect = Rect::from_min_max(pos2(tab_bar_rect.left(), tab_bar_rect.bottom()), ui.max_rect().max);
+        // --------------------------------------------------------------------
+        // 3. 文档内容区域（纯白色背景，字号放大，包含编辑框或原生 CommonMark 渲染器，Req 8, 11）
+        // --------------------------------------------------------------------
+        let content_rect = Rect::from_min_max(pos2(sub_bar_rect.left(), sub_bar_rect.bottom()), ui.max_rect().max);
         ui.painter().rect_filled(content_rect, 0.0, Color32::WHITE);
 
         ui.scope_builder(
             egui::UiBuilder::new().max_rect(content_rect.shrink2(vec2(16.0, 14.0))),
             |ui| {
-                // 在白色背景下设置优雅易读的深色文字排版风格 (参考 StackEdit)
+                // 在白色背景下设置优雅易读的深色文字排版风格并提升字号 (Req 8)
                 let text_color = Color32::from_rgb(0x24, 0x29, 0x2f);
                 ui.visuals_mut().override_text_color = Some(text_color);
                 ui.visuals_mut().widgets.noninteractive.fg_stroke = Stroke::new(1.0, text_color);
                 ui.visuals_mut().widgets.inactive.fg_stroke = Stroke::new(1.0, text_color);
+
+                let mut style = (**ui.style()).clone();
+                style.text_styles.insert(egui::TextStyle::Body, egui::FontId::proportional(15.5));
+                style.text_styles.insert(egui::TextStyle::Heading, egui::FontId::proportional(20.0));
+                style.text_styles.insert(egui::TextStyle::Monospace, egui::FontId::monospace(14.5));
+                ui.set_style(style);
 
                 match self.sub_tab {
                     DocSubTab::Edit => {
@@ -226,7 +242,7 @@ impl DocState {
                                     egui::TextEdit::multiline(&mut self.content)
                                         .desired_width(f32::INFINITY)
                                         .frame(egui::Frame::NONE)
-                                        .font(egui::TextStyle::Body),
+                                        .font(egui::FontId::proportional(15.5)),
                                 );
                             });
                     }
@@ -235,7 +251,7 @@ impl DocState {
                             .id_salt("cadflow_doc_preview_scroll")
                             .auto_shrink([false, false])
                             .show(ui, |ui| {
-                                ui.spacing_mut().item_spacing = vec2(0.0, 8.0);
+                                ui.spacing_mut().item_spacing = vec2(0.0, 10.0);
                                 egui_commonmark::CommonMarkViewer::new().show(ui, &mut self.cache, &self.content);
                             });
                     }

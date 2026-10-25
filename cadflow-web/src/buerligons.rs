@@ -81,7 +81,8 @@ fn render_menu_entry(ui: &mut Ui, e: &Entry, clicked: &mut Option<String>) {
             shortcut,
             enabled,
         } => {
-            let mut b = egui::Button::new(cadcraft_ui_egui::i18n::t(label));
+            let label_tr = crate::sidebar::tr_ui(label);
+            let mut b = egui::Button::new(label_tr);
             if let Some(s) = shortcut {
                 b = b.shortcut_text(format_shortcut(s, ui.ctx().os().is_mac()));
             }
@@ -91,7 +92,8 @@ fn render_menu_entry(ui: &mut Ui, e: &Entry, clicked: &mut Option<String>) {
             }
         }
         Entry::Sub { label, children } => {
-            ui.menu_button(cadcraft_ui_egui::i18n::menu(label), |ui| {
+            let label_tr = crate::sidebar::tr_ui(label);
+            ui.menu_button(label_tr, |ui| {
                 ui.set_min_width(148.0);
                 for c in children {
                     render_menu_entry(ui, c, clicked);
@@ -102,7 +104,7 @@ fn render_menu_entry(ui: &mut Ui, e: &Entry, clicked: &mut Option<String>) {
 }
 
 /// 绘制 Buerligons 风格的折叠菜单按钮（18x18 汉堡图标 + CADFlow 字样 + 包含全部菜单项与子项的中文下拉菜单）
-pub fn draw_collapsed_menu(ui: &mut Ui, app: &mut CadApp) {
+pub fn draw_collapsed_menu(ui: &mut Ui, app: &mut CadApp, show_help_dialog: &mut bool) {
     let t = Tokens::get();
 
     let mut style = (**ui.style()).clone();
@@ -136,14 +138,15 @@ pub fn draw_collapsed_menu(ui: &mut Ui, app: &mut CadApp) {
     let menu_resp = ui.menu_button("      CADFlow", |ui| {
         ui.set_min_width(148.0);
         for (name, entries) in &tree {
+            let name_tr = crate::sidebar::tr_ui(name);
             if *name == "Help" {
-                // Req 14: 去掉菜单中的帮助（Help）的子菜单，点击后直接弹出 CADFlow 帮助对话框
-                if ui.button(cadcraft_ui_egui::i18n::menu(name)).clicked() {
+                // Req 14 / Req 9: 去掉菜单中的帮助（Help）的子菜单，点击后直接弹出 CADFlow 帮助对话框
+                if ui.button(name_tr).clicked() {
                     clicked = Some("cadflow_help".into());
                     ui.close();
                 }
             } else {
-                ui.menu_button(cadcraft_ui_egui::i18n::menu(name), |ui| {
+                ui.menu_button(name_tr, |ui| {
                     ui.set_min_width(148.0);
                     for e in entries {
                         render_menu_entry(ui, e, &mut clicked);
@@ -162,7 +165,7 @@ pub fn draw_collapsed_menu(ui: &mut Ui, app: &mut CadApp) {
 
     if let Some(id) = clicked {
         if id == "cadflow_help" {
-            app.ui.dialog = Some("cadflow_help".into());
+            *show_help_dialog = true;
         } else {
             menus::activate(app, &id);
         }
@@ -287,6 +290,7 @@ pub fn draw_top_toolbar(
     doc_open: &mut bool,
     doc_width: &mut f32,
     doc_state: &mut crate::doc_panel::DocState,
+    show_help_dialog: &mut bool,
 ) {
     let t = Tokens::get();
     let mac = ui.ctx().os().is_mac();
@@ -307,78 +311,100 @@ pub fn draw_top_toolbar(
 
             // ================================================================
             // 1. 左侧区域 (Leading Section)：
-            //    CADFlow 菜单 -> 分割线 -> 撤销 -> 恢复 -> CAD侧边栏按钮
-            //    边界与侧边栏对齐，并竖向贯穿至工具栏顶部 (Req 3, Req 4)
+            //    CADFlow 菜单 -> 分割线 -> 撤销 -> 恢复 -> CAD侧边栏按钮 -> 侧边栏垂直边界线
+            //    Req 3, Req 4: 边界线与侧边栏边界完全对齐并贯穿工具栏
             // ================================================================
-            let lead_width = if *sidebar_open {
-                (*sidebar_width).clamp(SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH)
+            let is_sb_open = *sidebar_open;
+            let current_sidebar_w = (*sidebar_width).clamp(SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH);
+
+            let mut cursor_x = total_rect.left() + 8.0;
+
+            // [1] CADFlow 菜单 (宽 96px)
+            ui.scope_builder(
+                egui::UiBuilder::new().max_rect(Rect::from_min_size(
+                    pos2(cursor_x, total_rect.center().y - TOOL_SIZE / 2.0),
+                    vec2(96.0, TOOL_SIZE),
+                )),
+                |ui| {
+                    draw_collapsed_menu(ui, app, show_help_dialog);
+                },
+            );
+            cursor_x += 96.0 + TOOL_SPACING;
+
+            // [2] 分割线
+            ui.scope_builder(
+                egui::UiBuilder::new().max_rect(Rect::from_min_size(
+                    pos2(cursor_x, total_rect.center().y - 10.0),
+                    vec2(8.0, 20.0),
+                )),
+                |ui| {
+                    draw_toolbar_sep(ui);
+                },
+            );
+            cursor_x += 8.0 + TOOL_SPACING;
+
+            // [3] 撤销 (Undo)
+            let undo_tip = format!("{} ({})", crate::sidebar::tr_ui("Undo"), format_shortcut("Cmd+Z", mac));
+            ui.scope_builder(
+                egui::UiBuilder::new().max_rect(Rect::from_min_size(
+                    pos2(cursor_x, total_rect.center().y - TOOL_SIZE / 2.0),
+                    vec2(TOOL_SIZE, TOOL_SIZE),
+                )),
+                |ui| {
+                    let undo_resp = draw_tool_icon_button(ui, TOOL_SIZE, SUB_ICON_SIZE, false, &undo_tip, |p, r| {
+                        icons::paint(p, r, Icon::Undo, false);
+                    });
+                    if undo_resp.clicked() {
+                        clicked_cad_cmd = Some("u");
+                    }
+                },
+            );
+            cursor_x += TOOL_SIZE + TOOL_SPACING;
+
+            // [4] 恢复 (Redo)
+            let redo_tip = format!("{} ({})", crate::sidebar::tr_ui("Redo"), format_shortcut("Cmd+Shift+Z", mac));
+            ui.scope_builder(
+                egui::UiBuilder::new().max_rect(Rect::from_min_size(
+                    pos2(cursor_x, total_rect.center().y - TOOL_SIZE / 2.0),
+                    vec2(TOOL_SIZE, TOOL_SIZE),
+                )),
+                |ui| {
+                    let redo_resp = draw_tool_icon_button(ui, TOOL_SIZE, SUB_ICON_SIZE, false, &redo_tip, |p, r| {
+                        icons::paint(p, r, Icon::Redo, false);
+                    });
+                    if redo_resp.clicked() {
+                        clicked_cad_cmd = Some("redo");
+                    }
+                },
+            );
+            cursor_x += TOOL_SIZE + TOOL_SPACING;
+
+            // [5] CAD 侧边栏按钮与垂直边界线位置计算 (Req 3, Req 4)
+            let (sb_btn_x, boundary_x) = if is_sb_open {
+                let bx = total_rect.left() + current_sidebar_w;
+                (bx - TOOL_SIZE - 4.0, bx)
             } else {
-                SIDEBAR_MIN_WIDTH
+                let bx = cursor_x + 2.0;
+                (bx, bx + TOOL_SIZE + 4.0)
             };
 
-            let lead_rect = Rect::from_min_max(
-                total_rect.min,
-                pos2(total_rect.left() + lead_width, total_rect.bottom()),
-            );
-
-            // 渲染左侧区域内容
             ui.scope_builder(
-                egui::UiBuilder::new().max_rect(lead_rect.shrink2(vec2(8.0, 8.0))),
+                egui::UiBuilder::new().max_rect(Rect::from_min_size(
+                    pos2(sb_btn_x, total_rect.center().y - TOOL_SIZE / 2.0),
+                    vec2(TOOL_SIZE, TOOL_SIZE),
+                )),
                 |ui| {
-                    ui.horizontal_centered(|ui| {
-                        ui.spacing_mut().item_spacing.x = TOOL_SPACING;
-
-                        // [1] CADFlow 菜单
-                        draw_collapsed_menu(ui, app);
-
-                        // [2] 分割线
-                        draw_toolbar_sep(ui);
-
-                        // [3] 撤销 (Undo)
-                        let undo_tip = format!("{} ({})", cadcraft_ui_egui::i18n::t("Undo"), format_shortcut("Cmd+Z", mac));
-                        let undo_resp = draw_tool_icon_button(ui, TOOL_SIZE, SUB_ICON_SIZE, false, &undo_tip, |p, r| {
-                            icons::paint(p, r, Icon::Undo, false);
-                        });
-                        if undo_resp.clicked() {
-                            clicked_cad_cmd = Some("u");
-                        }
-
-                        // [4] 恢复 (Redo)
-                        let redo_tip = format!("{} ({})", cadcraft_ui_egui::i18n::t("Redo"), format_shortcut("Cmd+Shift+Z", mac));
-                        let redo_resp = draw_tool_icon_button(ui, TOOL_SIZE, SUB_ICON_SIZE, false, &redo_tip, |p, r| {
-                            icons::paint(p, r, Icon::Redo, false);
-                        });
-                        if redo_resp.clicked() {
-                            clicked_cad_cmd = Some("redo");
-                        }
-
-                        // [5] “CAD侧边栏”按钮 (Req 3: 间距不挤在一起，始终保证不小于 TOOL_SPACING)
-                        if *sidebar_open {
-                            // 侧边栏打开时：吸附到侧边栏滑动右边界，但至少保持与 Redo 的标准间距
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                let is_open = *sidebar_open;
-                                let sb_resp = draw_tool_icon_button(ui, TOOL_SIZE, SUB_ICON_SIZE, false, "CAD侧边栏", |p, r| {
-                                    paint_sidebar_toggle(p, r, is_open, t.text);
-                                });
-                                if sb_resp.clicked() {
-                                    *sidebar_open = false;
-                                }
-                            });
-                        } else {
-                            // 侧边栏收起时：紧随 Redo 按钮后排布，间距为 TOOL_SPACING
-                            let sb_resp = draw_tool_icon_button(ui, TOOL_SIZE, SUB_ICON_SIZE, false, "CAD侧边栏", |p, r| {
-                                paint_sidebar_toggle(p, r, false, t.text);
-                            });
-                            if sb_resp.clicked() {
-                                *sidebar_open = true;
-                            }
-                        }
+                    let sb_resp = draw_tool_icon_button(ui, TOOL_SIZE, SUB_ICON_SIZE, false, "CAD侧边栏", |p, r| {
+                        paint_sidebar_toggle(p, r, is_sb_open, t.text);
                     });
+                    if sb_resp.clicked() {
+                        *sidebar_open = !*sidebar_open;
+                    }
                 },
             );
 
-            // Req 4: 侧边栏分隔线贯穿整个工具栏，并且在侧边栏关闭时也在工具栏显示该线
-            ui.painter().vline(lead_rect.right(), total_rect.y_range(), Stroke::new(1.0, t.border));
+            // Req 3, Req 4: 侧边栏右边界竖线贯穿整个工具栏，与侧边栏边界完全对齐
+            ui.painter().vline(boundary_x, total_rect.y_range(), Stroke::new(1.0, t.border));
 
             // ================================================================
             // 2. 右侧区域 (Trailing Section)：
@@ -390,7 +416,7 @@ pub fn draw_top_toolbar(
 
             let doc_area_rect = if slide_progress > 0.001 {
                 Rect::from_min_max(
-                    pos2((total_rect.right() - effective_doc_w).max(lead_rect.right() + 180.0), total_rect.top()),
+                    pos2((total_rect.right() - effective_doc_w).max(boundary_x + 180.0), total_rect.top()),
                     total_rect.max,
                 )
             } else {
@@ -477,7 +503,7 @@ pub fn draw_top_toolbar(
             //    Req 4: 前面不再绘制单独分隔线，直接以侧边栏边界线为分割
             // ================================================================
             let center_rect = Rect::from_min_max(
-                pos2(lead_rect.right() + 4.0, total_rect.top()),
+                pos2(boundary_x + 4.0, total_rect.top()),
                 pos2(doc_area_rect.left() - 4.0, total_rect.bottom()),
             );
 
@@ -499,9 +525,10 @@ pub fn draw_top_toolbar(
                                         }
 
                                         for (icon, cmd, label, shortcut) in group.iter() {
+                                            let label_tr = crate::sidebar::tr_ui(label);
                                             let tip = match shortcut {
-                                                Some(sc) => format!("{} ({})", cadcraft_ui_egui::i18n::t(label), format_shortcut(sc, mac)),
-                                                None => cadcraft_ui_egui::i18n::t(label).to_string(),
+                                                Some(sc) => format!("{} ({})", label_tr, format_shortcut(sc, mac)),
+                                                None => label_tr,
                                             };
 
                                             let resp = draw_tool_icon_button(
@@ -529,7 +556,7 @@ pub fn draw_top_toolbar(
             // 处理 CAD 命令点击
             if let Some(cmd) = clicked_cad_cmd {
                 if cmd == "cadflow.help" {
-                    app.ui.dialog = Some("cadflow_help".into());
+                    *show_help_dialog = true;
                 } else {
                     app.start(cmd);
                 }

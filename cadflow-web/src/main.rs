@@ -42,6 +42,7 @@ mod web {
         show_sidebar: bool,
         sidebar_width: f32,
         sidebar_state: crate::sidebar::SidebarState,
+        show_help_dialog: bool,
         font_data: Option<Arc<egui::FontData>>,
         font_installed: bool,
     }
@@ -97,8 +98,8 @@ mod web {
         }
 
         fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-            // 确保使用中文语言包环境，翻译全部菜单、工具提示与界面元素 (Req 6)
-            cadcraft_ui_egui::i18n::with_language(self.app.language(), || {
+            // 确保全程使用中文语言包环境，翻译全部菜单、工具提示、面板与界面元素 (Req 5, Req 6)
+            cadcraft_ui_egui::i18n::with_language("zh", || {
                 // 隐藏 cadcraft 原生工具栏、独立横向菜单栏、文件标签页以及内置状态栏
                 self.app.ui.show_toolbar = false;
                 self.app.ui.in_window_menu = false;
@@ -120,6 +121,7 @@ mod web {
                     &mut self.show_doc_panel,
                     &mut self.doc_width,
                     &mut self.doc_state,
+                    &mut self.show_help_dialog,
                 );
 
                 // 2. 最底端状态栏：贯穿整个页面宽度（跨越左侧边栏、中央绘图区及右侧文档侧边栏，Req 13）
@@ -168,15 +170,36 @@ mod web {
                     }
                 }
 
-                // 5. CAD 核心绘图画布（占据中央剩余空间）
-                self.app.ui(ui);
+                // 5. 中央绘图画布（占据中央剩余空间，Req 4: 不调用 toolsets_strip，彻底去除右侧窄条和闪现 toolsets）
+                let t = Tokens::get();
+                let has_doc = !self.app.session.docs.is_empty() && !self.app.ui.start_tab;
+                egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.canvas)).show(ui, |ui| {
+                    if has_doc {
+                        cadcraft_ui_egui::docking::show(&mut self.app, ui);
+                    } else {
+                        cadcraft_ui_egui::chrome::start_page(&mut self.app, ui);
+                    }
+                });
 
-                // 6. CADFlow 帮助对话框处理 (Req 14)
+                // 检查是否有帮助相关对话框请求 (Req 9)
                 if matches!(self.app.ui.dialog.as_deref(), Some("cadflow_help") | Some("about") | Some("commands")) {
+                    self.show_help_dialog = true;
+                    self.app.ui.dialog = None;
+                }
+
+                // 6. 弹窗与对话框管理
+                cadcraft_ui_egui::dialogs::show(&mut self.app, ui.ctx());
+                cadcraft_ui_egui::palettes::patterns::prompt_picker(&mut self.app, ui.ctx());
+                cadcraft_ui_egui::closing::prompt(&mut self.app, ui.ctx());
+                cadcraft_ui_egui::autosave::show(&mut self.app, ui.ctx());
+                cadcraft_ui_egui::autosave::gpu_notice(&mut self.app, ui.ctx());
+
+                // 7. CADFlow 帮助对话框处理 (Req 9, Req 14)
+                if self.show_help_dialog {
                     let mut open = true;
                     crate::buerligons::show_cadflow_help_dialog(&mut self.app, ui.ctx(), &mut open);
                     if !open {
-                        self.app.ui.dialog = None;
+                        self.show_help_dialog = false;
                     }
                 }
 
@@ -334,6 +357,7 @@ mod web {
                             show_sidebar: true,    // 默认显示侧边栏 (Req 3)
                             sidebar_width: crate::buerligons::SIDEBAR_DEFAULT_WIDTH,
                             sidebar_state: crate::sidebar::SidebarState::default(),
+                            show_help_dialog: false,
                             font_data,
                             font_installed: false,
                         }))
