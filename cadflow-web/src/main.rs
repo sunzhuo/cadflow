@@ -24,7 +24,7 @@ mod web {
     use cadcraft_ui_egui::theme::Tokens;
     use cadcraft_ui_egui::{CadApp, Services};
     use craft_ui::docking::{Layout, Node};
-    use egui::{Color32, Stroke};
+    use egui::Stroke;
     use wasm_bindgen::JsCast as _;
 
     const CANVAS_ID: &str = "cadcraft_canvas";
@@ -97,72 +97,93 @@ mod web {
         }
 
         fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-            // 隐藏 cadcraft 原生工具栏、独立横向菜单栏和标签页
-            self.app.ui.show_toolbar = false;
-            self.app.ui.in_window_menu = false;
-            self.app.ui.show_file_tabs = false;
-            self.app.ui.start_tab = false;
+            // 确保使用中文语言包环境，翻译全部菜单、工具提示与界面元素 (Req 6)
+            cadcraft_ui_egui::i18n::with_language(self.app.language(), || {
+                // 隐藏 cadcraft 原生工具栏、独立横向菜单栏、文件标签页以及内置状态栏
+                self.app.ui.show_toolbar = false;
+                self.app.ui.in_window_menu = false;
+                self.app.ui.show_file_tabs = false;
+                self.app.ui.start_tab = false;
+                self.app.ui.show_toolsets = false;
+                self.app.ui.show_palettes = false;
+                self.app.ui.docking = initial_docking_workspace();
 
-            // 1. 顶部渲染 Buerligons 风格工具栏 (固定 48px 高)
-            crate::buerligons::draw_top_toolbar(
-                ui,
-                &mut self.app,
-                &mut self.show_sidebar,
-                &mut self.sidebar_width,
-                &mut self.show_doc_panel,
-                &mut self.doc_width,
-                &mut self.doc_state,
-            );
+                // 禁用 CadApp 内部中央画布的状态栏，以便在最外层渲染全宽贯穿状态栏 (Req 13)
+                self.app.ui.show_status_bar = false;
 
-            // 2. 左侧侧边栏面板（包含工具集/图层/块/组与特性）
-            if self.show_sidebar {
-                let sb_resp = egui::Panel::left("cadflow_left_sidebar")
-                    .resizable(true)
-                    .default_size(self.sidebar_width)
-                    .min_size(crate::buerligons::SIDEBAR_MIN_WIDTH)
-                    .max_size(crate::buerligons::SIDEBAR_MAX_WIDTH)
-                    .frame(
-                        egui::Frame::NONE
-                            .fill(Tokens::get().panel)
-                            .stroke(Stroke::new(1.0, Tokens::get().border)),
-                    )
-                    .show(ui, |ui| {
-                        self.sidebar_state.ui(ui, &mut self.app);
-                    });
-                self.sidebar_width = sb_resp.response.rect.width();
-            }
+                // 1. 顶部渲染 Buerligons 风格工具栏 (固定 48px 高)
+                crate::buerligons::draw_top_toolbar(
+                    ui,
+                    &mut self.app,
+                    &mut self.show_sidebar,
+                    &mut self.sidebar_width,
+                    &mut self.show_doc_panel,
+                    &mut self.doc_width,
+                    &mut self.doc_state,
+                );
 
-            // 3. 右侧文档面板（平滑滑动展开/折叠，纯白底色，StackEdit 样式）
-            let slide_progress = ui.ctx().animate_bool(egui::Id::new("cadflow_doc_slide"), self.show_doc_panel);
-            if slide_progress > 0.001 {
-                let full_w = self.doc_width.clamp(crate::buerligons::DOC_MIN_WIDTH, crate::buerligons::DOC_MAX_WIDTH);
-                let effective_w = full_w * slide_progress;
+                // 2. 最底端状态栏：贯穿整个页面宽度（跨越左侧边栏、中央绘图区及右侧文档侧边栏，Req 13）
+                cadcraft_ui_egui::chrome::status_bar(&mut self.app, ui);
 
-                let doc_resp = egui::Panel::right("cadflow_document_side_panel")
-                    .resizable(slide_progress >= 0.99)
-                    .exact_size(effective_w)
-                    .min_size(crate::buerligons::DOC_MIN_WIDTH)
-                    .max_size(crate::buerligons::DOC_MAX_WIDTH)
-                    .frame(
-                        egui::Frame::NONE
-                            .fill(Color32::WHITE)
-                            .stroke(Stroke::new(1.0, Tokens::get().border)),
-                    )
-                    .show(ui, |ui| {
-                        self.doc_state.ui(ui);
-                    });
-
-                if slide_progress >= 0.99 {
-                    self.doc_width = doc_resp.response.rect.width();
+                // 3. 左侧侧边栏面板（包含工具集/图层/块/组与高度可调整的特性面板，Req 1, 2, 7）
+                if self.show_sidebar {
+                    let sb_resp = egui::Panel::left("cadflow_left_sidebar")
+                        .resizable(true)
+                        .default_size(self.sidebar_width)
+                        .min_size(crate::buerligons::SIDEBAR_MIN_WIDTH)
+                        .max_size(crate::buerligons::SIDEBAR_MAX_WIDTH)
+                        .frame(
+                            egui::Frame::NONE
+                                .fill(Tokens::get().panel)
+                                .stroke(Stroke::new(1.0, Tokens::get().border)),
+                        )
+                        .show(ui, |ui| {
+                            self.sidebar_state.ui(ui, &mut self.app);
+                        });
+                    self.sidebar_width = sb_resp.response.rect.width();
                 }
-            }
 
-            // 4. CAD 核心绘图画布（占据其余空间）
-            self.app.ui(ui);
+                // 4. 右侧文档面板（平滑滑动展开/折叠，纯白底色，StackEdit 样式，Req 9, 10, 11）
+                let slide_progress = ui.ctx().animate_bool(egui::Id::new("cadflow_doc_slide"), self.show_doc_panel);
+                if slide_progress > 0.001 {
+                    let full_w = self.doc_width.clamp(crate::buerligons::DOC_MIN_WIDTH, crate::buerligons::DOC_MAX_WIDTH);
+                    let effective_w = full_w * slide_progress;
 
-            if let Some((bridge, reported)) = &self.host {
-                bridge.report_dirty(&self.app, reported);
-            }
+                    let doc_resp = egui::Panel::right("cadflow_document_side_panel")
+                        .resizable(slide_progress >= 0.99)
+                        .exact_size(effective_w)
+                        .min_size(crate::buerligons::DOC_MIN_WIDTH)
+                        .max_size(crate::buerligons::DOC_MAX_WIDTH)
+                        .frame(
+                            egui::Frame::NONE
+                                .fill(Tokens::get().panel)
+                                .stroke(Stroke::new(1.0, Tokens::get().border)),
+                        )
+                        .show(ui, |ui| {
+                            self.doc_state.ui(ui);
+                        });
+
+                    if slide_progress >= 0.99 {
+                        self.doc_width = doc_resp.response.rect.width();
+                    }
+                }
+
+                // 5. CAD 核心绘图画布（占据中央剩余空间）
+                self.app.ui(ui);
+
+                // 6. CADFlow 帮助对话框处理 (Req 14)
+                if matches!(self.app.ui.dialog.as_deref(), Some("cadflow_help") | Some("about") | Some("commands")) {
+                    let mut open = true;
+                    crate::buerligons::show_cadflow_help_dialog(&mut self.app, ui.ctx(), &mut open);
+                    if !open {
+                        self.app.ui.dialog = None;
+                    }
+                }
+
+                if let Some((bridge, reported)) = &self.host {
+                    bridge.report_dirty(&self.app, reported);
+                }
+            });
         }
     }
 
@@ -195,16 +216,13 @@ mod web {
 
     /// 构建初始停靠布局：主中央绘图区 (Canvas) 占满空间，其他面板隐藏至外层独立侧边栏
     fn initial_docking_workspace() -> cadcraft_ui_egui::docking::Workspace {
-        cadcraft_ui_egui::docking::Workspace {
-            layout: Layout {
-                root: Some(Node::Tabs {
-                    panels: vec![Panel::Canvas],
-                    active: 0,
-                }),
-                floating: Vec::new(),
-            },
-            hidden: Vec::new(),
-        }
+        craft_ui::docking::Workspace::new(Layout {
+            root: Some(Node::Tabs {
+                panels: vec![Panel::Canvas],
+                active: 0,
+            }),
+            floating: Vec::new(),
+        })
     }
 
     pub fn start() {

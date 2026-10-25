@@ -1,20 +1,18 @@
 //! Buerligons UI specifications for CADFlow:
 //! - Top toolbar height: 48px, tool button: 32x32px, corner radius: 7px, spacing: 2px
 //! - "CADFlow" menu button (18x18 hamburger icon + CADFlow text + full CADCraft menu tree translated to Chinese)
-//! - Sidebar toggle button aligned with sidebar boundary (boundary extends continuously to toolbar)
-//! - Dragging sidebar boundary moves the sidebar button within min/max bounds
-//! - Removed: New, Open, Save, SaveAs, Plot, Publish, PageSetup, Preview, Import, Export,
-//!   Attach, Share, Orbit, Properties, Layers, Blocks, List, Area
-//! - Kept CAD tools: Zoom Window, Pan, Zoom Extents, Measure Distance, Help
-//! - Document toggle button aligned with document panel boundary, moving with doc boundary
-//! - Sliding effect when toggling document panel and markdown edit buttons
-//! - StackEdit-styled markdown edit buttons group to the right of document button
+//! - "CAD侧边栏" toggle button with minimum spacing from Redo (separated by standard TOOL_SPACING)
+//! - Sidebar boundary extends continuously across the toolbar in both open and closed states
+//! - Zoom tools: Zoom Extents is placed BEFORE Zoom Window, in the same group: [ZoomExtents, ZoomWindow, Pan]
+//! - "文档侧边栏" toggle button with sliding animation
+//! - StackEdit-styled markdown edit buttons group to the right of document button (without Undo/Redo)
+//! - Help dialog with title "CADFlow" and tabs "About" & "Command"
 
 use cadcraft_ui_egui::CadApp;
 use cadcraft_ui_egui::icons::{self, Icon};
 use cadcraft_ui_egui::menus::{self, Entry};
 use cadcraft_ui_egui::theme::Tokens;
-use egui::{pos2, vec2, Color32, CornerRadius, Margin, Rect, Sense, Stroke, Ui};
+use egui::{pos2, vec2, Color32, CornerRadius, Margin, Rect, RichText, Sense, Stroke, Ui};
 
 // ----------------------------------------------------------------------------
 // 核心尺寸参数
@@ -25,40 +23,39 @@ pub const TOOL_SIZE: f32 = 32.0;
 pub const TOOL_CORNER_RADIUS: u8 = 7;
 pub const TOOL_SPACING: f32 = 2.0;
 
+// 侧边栏按钮宽度与最小宽度限制 (保证收起与滑动时与恢复按钮间距不小于 TOOL_SPACING)
 pub const SIDEBAR_DEFAULT_WIDTH: f32 = 288.0;
-pub const SIDEBAR_MIN_WIDTH: f32 = 220.0;
+pub const SIDEBAR_MIN_WIDTH: f32 = 226.0;
 pub const SIDEBAR_MAX_WIDTH: f32 = 560.0;
 
-pub const DOC_DEFAULT_WIDTH: f32 = 460.0;
-pub const DOC_MIN_WIDTH: f32 = 280.0;
-pub const DOC_MAX_WIDTH: f32 = 800.0;
+// 文档侧边栏宽度限制 (确保容纳全部工具栏编辑按钮，Req 10)
+pub const DOC_DEFAULT_WIDTH: f32 = 520.0;
+pub const DOC_MIN_WIDTH: f32 = 450.0;
+pub const DOC_MAX_WIDTH: f32 = 860.0;
 
 pub const MAIN_ICON_SIZE: f32 = 20.0;
 pub const SUB_ICON_SIZE: f32 = 18.0;
 
 // ----------------------------------------------------------------------------
-// CAD 工具栏保留的图标与命令组（依需求移除不需要的按钮，保留视图、测量与帮助）
+// CAD 工具栏保留的图标与命令组 (Req 5: 范围缩放放在窗口缩放前，并跟它一组)
 // ----------------------------------------------------------------------------
 
 pub type CadTool = (Icon, &'static str, &'static str, Option<&'static str>);
 
 pub const CAD_TOOL_GROUPS: &[&[CadTool]] = &[
-    // Group 1: 视图导航与平移 (已去除三维动态观察 3dorbit)
+    // Group 1: 视图导航 (范围缩放，窗口缩放，平移)
     &[
+        (Icon::ZoomExtents, "zoom.extents", "范围缩放", None),
         (Icon::ZoomWindow, "zoom.window", "窗口缩放", None),
         (Icon::Pan, "pan", "平移", None),
     ],
-    // Group 2: 视图管理 (已去除特性、图层特性管理器、块)
-    &[
-        (Icon::ZoomExtents, "zoom.extents", "范围缩放", None),
-    ],
-    // Group 3: 测量与查询 (已去除列表、面积)
+    // Group 2: 测量与查询
     &[
         (Icon::Measure, "dist", "测量距离", None),
     ],
-    // Group 4: 帮助
+    // Group 3: 帮助
     &[
-        (Icon::Help, "ui.dialog.about", "帮助", None),
+        (Icon::Help, "cadflow.help", "帮助", None),
     ],
 ];
 
@@ -130,23 +127,29 @@ pub fn draw_collapsed_menu(ui: &mut Ui, app: &mut CadApp) {
     style.visuals.widgets.open.weak_bg_fill = t.control;
     ui.set_style(style);
 
-    // 设置顶层 CADFlow 按钮尺寸为 32px 高度与 7px 圆角，为左侧 18x18 图标预留空间
     ui.spacing_mut().interact_size = vec2(96.0, TOOL_SIZE);
     ui.spacing_mut().button_padding = vec2(10.0, 6.0);
 
     let mut clicked = None;
     let tree = menus::tree(app);
 
-    // 将原 MENU 改为 CADFlow
     let menu_resp = ui.menu_button("      CADFlow", |ui| {
         ui.set_min_width(148.0);
         for (name, entries) in &tree {
-            ui.menu_button(cadcraft_ui_egui::i18n::menu(name), |ui| {
-                ui.set_min_width(148.0);
-                for e in entries {
-                    render_menu_entry(ui, e, &mut clicked);
+            if *name == "Help" {
+                // Req 14: 去掉菜单中的帮助（Help）的子菜单，点击后直接弹出 CADFlow 帮助对话框
+                if ui.button(cadcraft_ui_egui::i18n::menu(name)).clicked() {
+                    clicked = Some("cadflow_help".into());
+                    ui.close();
                 }
-            });
+            } else {
+                ui.menu_button(cadcraft_ui_egui::i18n::menu(name), |ui| {
+                    ui.set_min_width(148.0);
+                    for e in entries {
+                        render_menu_entry(ui, e, &mut clicked);
+                    }
+                });
+            }
         }
     });
 
@@ -158,41 +161,40 @@ pub fn draw_collapsed_menu(ui: &mut Ui, app: &mut CadApp) {
     icons::paint(ui.painter(), icon_rect, Icon::Menu, false);
 
     if let Some(id) = clicked {
-        menus::activate(app, &id);
+        if id == "cadflow_help" {
+            app.ui.dialog = Some("cadflow_help".into());
+        } else {
+            menus::activate(app, &id);
+        }
     }
 }
 
 // ----------------------------------------------------------------------------
-// Buerligons 规范的侧边栏与文档切换按钮图标绘制
+// Buerligons 风格图标绘制
 // ----------------------------------------------------------------------------
 
-/// 绘制 Buerligons 风格侧边栏开关图标（外框矩形 + 左侧填满/空心）
-pub fn paint_sidebar_toggle(p: &egui::Painter, rect: Rect, open: bool, fg: Color32) {
-    let box_rect = Rect::from_center_size(rect.center(), vec2(15.0, 13.0));
-    let cr = CornerRadius::same(2);
-    p.rect_stroke(box_rect, cr, Stroke::new(1.4, fg), egui::StrokeKind::Inside);
+pub fn paint_sidebar_toggle(p: &egui::Painter, r: Rect, open: bool, fg: Color32) {
+    let box_rect = Rect::from_center_size(r.center(), vec2(16.0, 14.0));
+    p.rect_stroke(box_rect, CornerRadius::same(2), Stroke::new(1.5, fg), egui::StrokeKind::Inside);
     let split_x = box_rect.left() + 5.0;
-    p.line_segment([pos2(split_x, box_rect.top()), pos2(split_x, box_rect.bottom())], Stroke::new(1.4, fg));
+    p.vline(split_x, box_rect.y_range(), Stroke::new(1.5, fg));
     if open {
         let fill_rect = Rect::from_min_max(box_rect.min, pos2(split_x, box_rect.bottom()));
         p.rect_filled(fill_rect, CornerRadius { nw: 2, sw: 2, ne: 0, se: 0 }, fg);
     }
 }
 
-/// 绘制 Buerligons 风格文档面板开关图标（外框矩形 + 右侧填满/空心）
-pub fn paint_doc_toggle(p: &egui::Painter, rect: Rect, open: bool, fg: Color32) {
-    let box_rect = Rect::from_center_size(rect.center(), vec2(15.0, 13.0));
-    let cr = CornerRadius::same(2);
-    p.rect_stroke(box_rect, cr, Stroke::new(1.4, fg), egui::StrokeKind::Inside);
+pub fn paint_doc_toggle(p: &egui::Painter, r: Rect, open: bool, fg: Color32) {
+    let box_rect = Rect::from_center_size(r.center(), vec2(16.0, 14.0));
+    p.rect_stroke(box_rect, CornerRadius::same(2), Stroke::new(1.5, fg), egui::StrokeKind::Inside);
     let split_x = box_rect.right() - 5.0;
-    p.line_segment([pos2(split_x, box_rect.top()), pos2(split_x, box_rect.bottom())], Stroke::new(1.4, fg));
+    p.vline(split_x, box_rect.y_range(), Stroke::new(1.5, fg));
     if open {
         let fill_rect = Rect::from_min_max(pos2(split_x, box_rect.top()), box_rect.max);
         p.rect_filled(fill_rect, CornerRadius { nw: 0, sw: 0, ne: 2, se: 2 }, fg);
     }
 }
 
-/// 通用工具栏图标按钮
 pub fn draw_tool_icon_button(
     ui: &mut Ui,
     btn_size: f32,
@@ -232,7 +234,6 @@ pub fn draw_tool_icon_button(
     resp
 }
 
-/// StackEdit 风格的文档小工具按钮
 pub fn draw_stackedit_btn(ui: &mut Ui, label: &str, tooltip: &str) -> egui::Response {
     let t = Tokens::get();
     let btn_sz = 28.0;
@@ -263,7 +264,6 @@ pub fn draw_stackedit_btn(ui: &mut Ui, label: &str, tooltip: &str) -> egui::Resp
     resp
 }
 
-/// 工具栏竖向分割线：宽 1px，高 18px
 pub fn draw_toolbar_sep(ui: &mut Ui) {
     let t = Tokens::get();
     let (rect, _) = ui.allocate_exact_size(vec2(10.0, TOOL_SIZE), Sense::hover());
@@ -303,18 +303,17 @@ pub fn draw_top_toolbar(
             let mut clicked_cad_cmd = None;
             let mut doc_action = None;
 
-            // 动画平滑进度：0.0 (收起) -> 1.0 (完全展开)
             let slide_progress = ui.ctx().animate_bool(egui::Id::new("cadflow_doc_slide"), *doc_open);
 
             // ================================================================
             // 1. 左侧区域 (Leading Section)：
-            //    包含 CADFlow 菜单、撤销、恢复，并在最右侧放置“侧边栏”按钮
-            //    边界与侧边栏对齐，并竖向贯穿至工具栏顶部
+            //    CADFlow 菜单 -> 分割线 -> 撤销 -> 恢复 -> CAD侧边栏按钮
+            //    边界与侧边栏对齐，并竖向贯穿至工具栏顶部 (Req 3, Req 4)
             // ================================================================
             let lead_width = if *sidebar_open {
                 (*sidebar_width).clamp(SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH)
             } else {
-                214.0 // 闭合时的紧凑宽度
+                SIDEBAR_MIN_WIDTH
             };
 
             let lead_rect = Rect::from_min_max(
@@ -329,14 +328,14 @@ pub fn draw_top_toolbar(
                     ui.horizontal_centered(|ui| {
                         ui.spacing_mut().item_spacing.x = TOOL_SPACING;
 
-                        // [1] CADFlow 多级菜单
+                        // [1] CADFlow 菜单
                         draw_collapsed_menu(ui, app);
 
                         // [2] 分割线
                         draw_toolbar_sep(ui);
 
                         // [3] 撤销 (Undo)
-                        let undo_tip = format!("{} ({})", "撤销", format_shortcut("Cmd+Z", mac));
+                        let undo_tip = format!("{} ({})", cadcraft_ui_egui::i18n::t("Undo"), format_shortcut("Cmd+Z", mac));
                         let undo_resp = draw_tool_icon_button(ui, TOOL_SIZE, SUB_ICON_SIZE, false, &undo_tip, |p, r| {
                             icons::paint(p, r, Icon::Undo, false);
                         });
@@ -345,7 +344,7 @@ pub fn draw_top_toolbar(
                         }
 
                         // [4] 恢复 (Redo)
-                        let redo_tip = format!("{} ({})", "恢复", format_shortcut("Cmd+Shift+Z", mac));
+                        let redo_tip = format!("{} ({})", cadcraft_ui_egui::i18n::t("Redo"), format_shortcut("Cmd+Shift+Z", mac));
                         let redo_resp = draw_tool_icon_button(ui, TOOL_SIZE, SUB_ICON_SIZE, false, &redo_tip, |p, r| {
                             icons::paint(p, r, Icon::Redo, false);
                         });
@@ -353,41 +352,48 @@ pub fn draw_top_toolbar(
                             clicked_cad_cmd = Some("redo");
                         }
 
-                        // [5] 侧边栏按钮：紧贴在左侧区最右边界
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let sb_tip = if *sidebar_open { "隐藏侧边栏" } else { "显示侧边栏" };
-                            let is_open = *sidebar_open;
-                            let sb_resp = draw_tool_icon_button(ui, TOOL_SIZE, SUB_ICON_SIZE, false, sb_tip, |p, r| {
-                                paint_sidebar_toggle(p, r, is_open, t.text);
+                        // [5] “CAD侧边栏”按钮 (Req 3: 间距不挤在一起，始终保证不小于 TOOL_SPACING)
+                        if *sidebar_open {
+                            // 侧边栏打开时：吸附到侧边栏滑动右边界，但至少保持与 Redo 的标准间距
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                let is_open = *sidebar_open;
+                                let sb_resp = draw_tool_icon_button(ui, TOOL_SIZE, SUB_ICON_SIZE, false, "CAD侧边栏", |p, r| {
+                                    paint_sidebar_toggle(p, r, is_open, t.text);
+                                });
+                                if sb_resp.clicked() {
+                                    *sidebar_open = false;
+                                }
+                            });
+                        } else {
+                            // 侧边栏收起时：紧随 Redo 按钮后排布，间距为 TOOL_SPACING
+                            let sb_resp = draw_tool_icon_button(ui, TOOL_SIZE, SUB_ICON_SIZE, false, "CAD侧边栏", |p, r| {
+                                paint_sidebar_toggle(p, r, false, t.text);
                             });
                             if sb_resp.clicked() {
-                                *sidebar_open = !*sidebar_open;
+                                *sidebar_open = true;
                             }
-                        });
+                        }
                     });
                 },
             );
 
-            // 若侧边栏打开，在 lead_rect 右边缘绘制贯穿工具栏的边界线 (边界一直显示到工具栏)
-            if *sidebar_open {
-                ui.painter().vline(lead_rect.right(), total_rect.y_range(), Stroke::new(1.0, t.border));
-            }
+            // Req 4: 侧边栏分隔线贯穿整个工具栏，并且在侧边栏关闭时也在工具栏显示该线
+            ui.painter().vline(lead_rect.right(), total_rect.y_range(), Stroke::new(1.0, t.border));
 
             // ================================================================
             // 2. 右侧区域 (Trailing Section)：
-            //    包含“文档”按钮与 StackEdit 风格的文档编辑按钮组
-            //    边界与文档面板对齐，滑动动画效果展示/隐藏
+            //    包含“文档侧边栏”按钮与 StackEdit 风格的文档编辑按钮组
+            //    边界与文档面板对齐，滑动动画效果展示/隐藏 (Req 8, Req 10)
             // ================================================================
             let full_doc_w = (*doc_width).clamp(DOC_MIN_WIDTH, DOC_MAX_WIDTH);
             let effective_doc_w = full_doc_w * slide_progress;
 
             let doc_area_rect = if slide_progress > 0.001 {
                 Rect::from_min_max(
-                    pos2((total_rect.right() - effective_doc_w).max(lead_rect.right() + 150.0), total_rect.top()),
+                    pos2((total_rect.right() - effective_doc_w).max(lead_rect.right() + 180.0), total_rect.top()),
                     total_rect.max,
                 )
             } else {
-                // 折叠时只在最右侧保留“文档”按钮位置
                 Rect::from_min_max(
                     pos2(total_rect.right() - (TOOL_SIZE + 16.0), total_rect.top()),
                     total_rect.max,
@@ -405,27 +411,17 @@ pub fn draw_top_toolbar(
                     ui.horizontal_centered(|ui| {
                         ui.spacing_mut().item_spacing.x = 2.0;
 
-                        // [1] “文档”按钮 (在编辑按钮组的左侧显示，边界即文档面板边界)
-                        let doc_tip = if *doc_open { "隐藏文档面板" } else { "显示文档面板" };
+                        // [1] “文档侧边栏”按钮 (Req 8)
                         let is_doc_open = *doc_open;
-                        let doc_resp = draw_tool_icon_button(ui, TOOL_SIZE, SUB_ICON_SIZE, false, doc_tip, |p, r| {
+                        let doc_resp = draw_tool_icon_button(ui, TOOL_SIZE, SUB_ICON_SIZE, false, "文档侧边栏", |p, r| {
                             paint_doc_toggle(p, r, is_doc_open, t.text);
                         });
                         if doc_resp.clicked() {
                             *doc_open = !*doc_open;
                         }
 
-                        // [2] 展开状态下且滑动进度大于 0.5 时渲染 StackEdit Markdown 编辑工具组
+                        // [2] 展开状态下渲染 StackEdit Markdown 编辑工具组 (已去除撤销/重做编辑，Req 8)
                         if slide_progress > 0.5 {
-                            draw_toolbar_sep(ui);
-
-                            if draw_stackedit_btn(ui, "↶", "撤销编辑").clicked() {
-                                doc_action = Some(crate::doc_panel::DocAction::Undo);
-                            }
-                            if draw_stackedit_btn(ui, "↷", "重做编辑").clicked() {
-                                doc_action = Some(crate::doc_panel::DocAction::Redo);
-                            }
-
                             draw_toolbar_sep(ui);
 
                             if draw_stackedit_btn(ui, "B", "粗体 (Ctrl+Shift+B)").clicked() {
@@ -477,7 +473,8 @@ pub fn draw_top_toolbar(
 
             // ================================================================
             // 3. 中间区域 (Center Section)：
-            //    仅保留必需的 CAD 工具（缩放、平移、测量、帮助），占满剩余空间
+            //    CAD 工具（范围缩放、窗口缩放、平移、测量、帮助）
+            //    Req 4: 前面不再绘制单独分隔线，直接以侧边栏边界线为分割
             // ================================================================
             let center_rect = Rect::from_min_max(
                 pos2(lead_rect.right() + 4.0, total_rect.top()),
@@ -495,13 +492,16 @@ pub fn draw_top_toolbar(
                                 ui.horizontal_centered(|ui| {
                                     ui.spacing_mut().item_spacing.x = TOOL_SPACING;
 
-                                    for group in CAD_TOOL_GROUPS {
-                                        draw_toolbar_sep(ui);
+                                    for (g_idx, group) in CAD_TOOL_GROUPS.iter().enumerate() {
+                                        // Req 4: 第一个工具组前不画分隔线 (以侧边栏边界线代替)
+                                        if g_idx > 0 {
+                                            draw_toolbar_sep(ui);
+                                        }
 
                                         for (icon, cmd, label, shortcut) in group.iter() {
                                             let tip = match shortcut {
-                                                Some(sc) => format!("{} ({})", label, format_shortcut(sc, mac)),
-                                                None => (*label).to_string(),
+                                                Some(sc) => format!("{} ({})", cadcraft_ui_egui::i18n::t(label), format_shortcut(sc, mac)),
+                                                None => cadcraft_ui_egui::i18n::t(label).to_string(),
                                             };
 
                                             let resp = draw_tool_icon_button(
@@ -528,7 +528,11 @@ pub fn draw_top_toolbar(
 
             // 处理 CAD 命令点击
             if let Some(cmd) = clicked_cad_cmd {
-                app.start(cmd);
+                if cmd == "cadflow.help" {
+                    app.ui.dialog = Some("cadflow_help".into());
+                } else {
+                    app.start(cmd);
+                }
             }
 
             // 处理 Markdown 编辑操作
@@ -537,3 +541,91 @@ pub fn draw_top_toolbar(
             }
         });
 }
+
+/// 渲染 CADFlow 专用帮助对话框 (Req 14)
+/// - 对话框标题：“CADFlow”
+/// - 标签页：About (清空) 与 Command (沿用 CADCraft Help 命令参考)
+pub fn show_cadflow_help_dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
+    let t = Tokens::get();
+    let mut start_cmd = None;
+
+    egui::Window::new("CADFlow")
+        .id(egui::Id::new("cadflow_help_window"))
+        .open(open)
+        .default_size(vec2(640.0, 480.0))
+        .show(ctx, |ui| {
+            let id = ui.id().with("help_tab");
+            let mut active_tab = ui.data_mut(|d| d.get_temp::<usize>(id)).unwrap_or(0);
+
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                for (idx, name) in ["About", "Command"].iter().enumerate() {
+                    let is_active = active_tab == idx;
+                    if ui.selectable_label(is_active, *name).clicked() {
+                        active_tab = idx;
+                        ui.data_mut(|d| d.insert_temp(id, active_tab));
+                    }
+                }
+            });
+            ui.separator();
+
+            if active_tab == 0 {
+                // About 标签页内容清空 (Req 14)
+                ui.vertical_centered(|ui| {
+                    ui.add_space(60.0);
+                    ui.heading("CADFlow");
+                    ui.add_space(8.0);
+                    ui.label(RichText::new("Web CAD & Markdown Workspace").small().color(t.text_dim));
+                });
+            } else {
+                // Command 标签页沿用原 CADCraft Help 命令参考对话框内容
+                let filter_id = ui.id().with("cmdfilter");
+                let mut filter = ui.data_mut(|d| d.get_temp::<String>(filter_id)).unwrap_or_default();
+                ui.horizontal(|ui| {
+                    ui.label(cadcraft_ui_egui::i18n::t("Filter"));
+                    ui.text_edit_singleline(&mut filter);
+                });
+                ui.data_mut(|d| d.insert_temp(filter_id, filter.clone()));
+                let f = filter.to_lowercase();
+
+                egui::ScrollArea::vertical()
+                    .id_salt("cadflow_cmd_scroll")
+                    .show(ui, |ui| {
+                        egui::Grid::new("cadflow_cmdref").striped(true).num_columns(3).show(ui, |ui| {
+                            for c in cadcraft_engine::command_specs() {
+                                if !f.is_empty()
+                                    && !c.id.contains(&f)
+                                    && !c.label.to_ascii_lowercase().contains(&f)
+                                    && !cadcraft_ui_egui::i18n::t(c.label).to_lowercase().contains(&f)
+                                {
+                                    continue;
+                                }
+                                if ui.link(c.id.to_ascii_uppercase()).clicked() {
+                                    start_cmd = Some(c.id);
+                                }
+                                ui.label(cadcraft_ui_egui::i18n::t(c.label));
+                                ui.label(
+                                    RichText::new(if c.aliases.is_empty() {
+                                        String::new()
+                                    } else {
+                                        c.aliases.join(", ").to_ascii_uppercase()
+                                    })
+                                    .small(),
+                                );
+                                ui.end_row();
+                            }
+                        });
+                    });
+            }
+        });
+
+    if let Some(cmd) = start_cmd {
+        *open = false;
+        app.ui.dialog = None;
+        app.start(cmd);
+    }
+}
+
+
+
+
