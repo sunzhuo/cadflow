@@ -33,6 +33,8 @@ pub fn tr_ui(key: &str) -> String {
     }
     match key {
         "Properties" => "特性",
+        "Inspector" => "检查器 (Inspector)",
+        "Style Editor" => "样式编辑器 (Style Editor)",
         "No selection" => "未选择",
         "Color" => "颜色",
         "Layer" => "图层",

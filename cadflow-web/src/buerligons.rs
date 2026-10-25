@@ -104,7 +104,13 @@ fn render_menu_entry(ui: &mut Ui, e: &Entry, clicked: &mut Option<String>) {
 }
 
 /// 绘制 Buerligons 风格的折叠菜单按钮（18x18 汉堡图标 + CADFlow 字样 + 包含全部菜单项与子项的中文下拉菜单）
-pub fn draw_collapsed_menu(ui: &mut Ui, app: &mut CadApp, show_help_dialog: &mut bool) {
+pub fn draw_collapsed_menu(
+    ui: &mut Ui,
+    app: &mut CadApp,
+    show_help_dialog: &mut bool,
+    show_inspector: &mut bool,
+    show_style_editor: &mut bool,
+) {
     let t = Tokens::get();
 
     let mut style = (**ui.style()).clone();
@@ -145,6 +151,30 @@ pub fn draw_collapsed_menu(ui: &mut Ui, app: &mut CadApp, show_help_dialog: &mut
                     clicked = Some("cadflow_help".into());
                     ui.close();
                 }
+            } else if *name == "Window" {
+                ui.menu_button(name_tr, |ui| {
+                    ui.set_min_width(148.0);
+                    for e in entries {
+                        render_menu_entry(ui, e, &mut clicked);
+                    }
+                    let extra_entries = [
+                        Entry::Item {
+                            label: "Inspector".into(),
+                            id: "cadflow_inspector".into(),
+                            shortcut: None,
+                            enabled: true,
+                        },
+                        Entry::Item {
+                            label: "Style Editor".into(),
+                            id: "cadflow_style_editor".into(),
+                            shortcut: None,
+                            enabled: true,
+                        },
+                    ];
+                    for e in &extra_entries {
+                        render_menu_entry(ui, e, &mut clicked);
+                    }
+                });
             } else {
                 ui.menu_button(name_tr, |ui| {
                     ui.set_min_width(148.0);
@@ -166,6 +196,10 @@ pub fn draw_collapsed_menu(ui: &mut Ui, app: &mut CadApp, show_help_dialog: &mut
     if let Some(id) = clicked {
         if id == "cadflow_help" {
             *show_help_dialog = true;
+        } else if id == "cadflow_inspector" {
+            *show_inspector = !*show_inspector;
+        } else if id == "cadflow_style_editor" {
+            *show_style_editor = !*show_style_editor;
         } else {
             menus::activate(app, &id);
         }
@@ -291,6 +325,8 @@ pub fn draw_top_toolbar(
     doc_width: &mut f32,
     doc_state: &mut crate::doc_panel::DocState,
     show_help_dialog: &mut bool,
+    show_inspector: &mut bool,
+    show_style_editor: &mut bool,
 ) {
     let t = Tokens::get();
     let mac = ui.ctx().os().is_mac();
@@ -326,7 +362,7 @@ pub fn draw_top_toolbar(
                     vec2(96.0, TOOL_SIZE),
                 )),
                 |ui| {
-                    draw_collapsed_menu(ui, app, show_help_dialog);
+                    draw_collapsed_menu(ui, app, show_help_dialog, show_inspector, show_style_editor);
                 },
             );
             cursor_x += 96.0 + TOOL_SPACING;

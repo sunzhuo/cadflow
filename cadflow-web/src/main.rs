@@ -43,6 +43,8 @@ mod web {
         sidebar_width: f32,
         sidebar_state: crate::sidebar::SidebarState,
         show_help_dialog: bool,
+        show_inspector: bool,
+        show_style_editor: bool,
         font_data: Option<Arc<egui::FontData>>,
         font_installed: bool,
     }
@@ -122,6 +124,8 @@ mod web {
                     &mut self.doc_width,
                     &mut self.doc_state,
                     &mut self.show_help_dialog,
+                    &mut self.show_inspector,
+                    &mut self.show_style_editor,
                 );
 
                 // 2. 最底端状态栏：贯穿整个页面宽度（跨越左侧边栏、中央绘图区及右侧文档侧边栏，Req 13）
@@ -201,6 +205,24 @@ mod web {
                     if !open {
                         self.show_help_dialog = false;
                     }
+                }
+
+                // 8. 运行时可视化调试工具 (Inspector & Style Editor)
+                let ctx = ui.ctx().clone();
+                if self.show_inspector {
+                    egui::Window::new("Inspector")
+                        .open(&mut self.show_inspector)
+                        .show(&ctx, |ui| {
+                            ctx.inspection_ui(ui); // 检查当前帧渲染的所有组件及其属性
+                        });
+                }
+                if self.show_style_editor {
+                    egui::Window::new("Style Editor")
+                        .open(&mut self.show_style_editor)
+                        .show(&ctx, |ui| {
+                            let theme = ctx.theme();
+                            ctx.style_ui(ui, theme); // 可视化实时调整间距、字体、颜色主题等
+                        });
                 }
 
                 if let Some((bridge, reported)) = &self.host {
@@ -358,6 +380,8 @@ mod web {
                             sidebar_width: crate::buerligons::SIDEBAR_DEFAULT_WIDTH,
                             sidebar_state: crate::sidebar::SidebarState::default(),
                             show_help_dialog: false,
+                            show_inspector: false,
+                            show_style_editor: false,
                             font_data,
                             font_installed: false,
                         }))
