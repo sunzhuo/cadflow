@@ -1,17 +1,38 @@
 //! Markdown document panel and editor for CADFlow.
 //!
-//! Provides a full-featured Markdown document editing and real-time preview panel
-//! for CAD project specifications, layer descriptions, change logs, and design notes.
+//! Refactored to reference the "Tool Sets" panel style:
+//! - Top header: "文档" text only
+//! - Sub-tabs: "编辑" (Edit) and "预览" (Preview)
+//! - No other functional buttons inside the panel (all buttons are located in the top toolbar)
+//! - Pure white background (#ffffff) except for borders
+//! - Typography and font styling reference StackEdit
 
-use egui::{Color32, RichText, Stroke, Ui, Vec2};
+use egui::{pos2, vec2, Color32, CornerRadius, Margin, Rect, RichText, Sense, Stroke, Ui, Vec2};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub enum DocMode {
+pub enum DocSubTab {
     #[default]
-    Split,
     Edit,
     Preview,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DocAction {
+    Undo,
+    Redo,
+    Bold,
+    Italic,
+    Heading,
+    Strikethrough,
+    UnorderedList,
+    OrderedList,
+    CheckList,
+    Quote,
+    Code,
+    Table,
+    Link,
+    Image,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -19,9 +40,11 @@ pub enum DocMode {
 pub struct DocState {
     pub title: String,
     pub content: String,
-    pub mode: DocMode,
+    pub sub_tab: DocSubTab,
     #[serde(skip)]
-    pub status_notice: Option<String>,
+    pub undo_stack: Vec<String>,
+    #[serde(skip)]
+    pub redo_stack: Vec<String>,
 }
 
 pub const DEFAULT_DOC_TEMPLATE: &str = r#"# 数字化工程设计与技术说明书 (CADFlow Design Notes)
@@ -69,10 +92,9 @@ pub const DEFAULT_DOC_TEMPLATE: &str = r#"# 数字化工程设计与技术说明
 ## 4. 技术备忘与注意事项
 > 📌 **重要提示**：
 > 1. 本面板支持全功能 **Markdown** 语法编辑与实时渲染；
-> 2. 点击上方工具栏可随时切换【编辑】、【预览】或【双栏】模式；
-> 3. 支持快捷格式插入（标题、加粗、斜体、代码、列表、任务待办、表格）；
-> 4. 点击【导出】按钮可将文档下载保存为本地 `.md` 文件；
-> 5. 本文档面板无尺寸限制，可通过左边缘拖动条自由调整宽度。
+> 2. 点击上方子标签可切换【编辑】与【预览】；
+> 3. 工具栏右侧提供完整的 Markdown 编辑工具组；
+> 4. 点击【文档】按钮可平滑展开与折叠文档面板。
 "#;
 
 impl Default for DocState {
@@ -80,239 +102,151 @@ impl Default for DocState {
         Self {
             title: "设计说明.md".to_string(),
             content: DEFAULT_DOC_TEMPLATE.to_string(),
-            mode: DocMode::Split,
-            status_notice: None,
+            sub_tab: DocSubTab::Edit,
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
         }
     }
 }
 
 impl DocState {
-    pub fn ui(&mut self, ui: &mut Ui, is_visible: &mut bool) {
-        let accent_color = Color32::from_rgb(0x3d, 0x8b, 0xfd);
-
-        ui.vertical(|ui| {
-            // --- 顶部工具栏 ---
-            ui.horizontal(|ui| {
-                ui.heading(RichText::new("📄 设计文档").size(14.5).strong());
-                ui.add_space(6.0);
-
-                // 模式切换按钮
-                let is_split = self.mode == DocMode::Split;
-                let is_edit = self.mode == DocMode::Edit;
-                let is_preview = self.mode == DocMode::Preview;
-
-                if ui.selectable_label(is_split, "📑 双栏").clicked() {
-                    self.mode = DocMode::Split;
+    /// 执行来自顶部工具栏的 Markdown 编辑操作
+    pub fn apply_action(&mut self, action: DocAction) {
+        match action {
+            DocAction::Undo => {
+                if let Some(prev) = self.undo_stack.pop() {
+                    self.redo_stack.push(self.content.clone());
+                    self.content = prev;
                 }
-                if ui.selectable_label(is_edit, "✏️ 编辑").clicked() {
-                    self.mode = DocMode::Edit;
+            }
+            DocAction::Redo => {
+                if let Some(next) = self.redo_stack.pop() {
+                    self.undo_stack.push(self.content.clone());
+                    self.content = next;
                 }
-                if ui.selectable_label(is_preview, "👁️ 预览").clicked() {
-                    self.mode = DocMode::Preview;
-                }
+            }
+            DocAction::Bold => self.record_and_insert("**粗体文字**"),
+            DocAction::Italic => self.record_and_insert("*斜体文字*"),
+            DocAction::Heading => self.record_and_insert("\n## 标题\n"),
+            DocAction::Strikethrough => self.record_and_insert("~~删除线文字~~"),
+            DocAction::UnorderedList => self.record_and_insert("\n- 列表项\n"),
+            DocAction::OrderedList => self.record_and_insert("\n1. 序号项\n"),
+            DocAction::CheckList => self.record_and_insert("\n- [ ] 待办项\n"),
+            DocAction::Quote => self.record_and_insert("\n> 引用内容\n"),
+            DocAction::Code => self.record_and_insert("\n```rust\n// 代码块\n```\n"),
+            DocAction::Table => self.record_and_insert("\n| 标题1 | 标题2 |\n| :--- | :--- |\n| 单元格1 | 单元格2 |\n"),
+            DocAction::Link => self.record_and_insert("[链接说明](https://example.com)"),
+            DocAction::Image => self.record_and_insert("![图片描述](https://example.com/image.png)"),
+        }
+    }
 
-                ui.add_space(6.0);
-                ui.separator();
-                ui.add_space(4.0);
+    fn record_and_insert(&mut self, snippet: &str) {
+        self.undo_stack.push(self.content.clone());
+        self.redo_stack.clear();
+        self.content.push_str(snippet);
+    }
 
-                // 操作按钮
-                if ui.button("💾 导出").on_hover_text("导出下载为本地 .md 文件").clicked() {
-                    let filename = if self.title.trim().is_empty() {
-                        "设计说明.md"
-                    } else {
-                        &self.title
-                    };
-                    #[cfg(target_arch = "wasm32")]
-                    {
-                        let _ = crate::download::download(filename, "text/markdown;charset=utf-8", self.content.as_bytes());
-                        self.status_notice = Some("已触发导出下载".into());
+    /// 渲染重构后的文档面板（纯白底色，参考工具集面板样式）
+    pub fn ui(&mut self, ui: &mut Ui) {
+        let t = cadcraft_ui_egui::theme::Tokens::get();
+
+        // 1. 最上方“文档”字样标题栏 (高度 32px，参考工具集顶部样式)
+        let header_h = 32.0;
+        let (hr, _) = ui.allocate_exact_size(vec2(ui.available_width(), header_h), Sense::hover());
+        ui.painter().rect_filled(hr, 0.0, Color32::WHITE);
+        ui.painter().text(
+            pos2(hr.left() + 14.0, hr.center().y),
+            egui::Align2::LEFT_CENTER,
+            "文档",
+            egui::FontId::proportional(15.0),
+            Color32::from_rgb(0x2c, 0x3e, 0x50),
+        );
+        ui.painter().hline(hr.x_range(), hr.bottom(), Stroke::new(1.0, t.border));
+
+        // 2. 下面是“编辑”和“预览”两个子标签页切换栏 (高度 30px)
+        let tab_h = 30.0;
+        let (tr, _) = ui.allocate_exact_size(vec2(ui.available_width(), tab_h), Sense::hover());
+        ui.painter().rect_filled(tr, 0.0, Color32::from_rgb(0xf8, 0xf9, 0xfa));
+
+        let tab_w = 72.0;
+        let tabs = [(DocSubTab::Edit, "编辑"), (DocSubTab::Preview, "预览")];
+        let mut clicked_tab = None;
+
+        for (idx, (variant, label)) in tabs.iter().enumerate() {
+            let tab_rect = Rect::from_min_size(pos2(tr.left() + 10.0 + idx as f32 * (tab_w + 4.0), tr.top()), vec2(tab_w, tab_h));
+            let is_active = self.sub_tab == *variant;
+            let resp = ui.interact(tab_rect, ui.id().with(("doc_tab", idx)), Sense::click());
+
+            if is_active {
+                ui.painter().rect_filled(tab_rect, CornerRadius::same(0), Color32::WHITE);
+                let indicator = Rect::from_min_max(pos2(tab_rect.left(), tab_rect.bottom() - 2.0), tab_rect.max);
+                ui.painter().rect_filled(indicator, CornerRadius::same(1), Color32::from_rgb(0x3d, 0x8b, 0xfd));
+            }
+
+            ui.painter().text(
+                tab_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                *label,
+                egui::FontId::proportional(13.0),
+                if is_active { Color32::from_rgb(0x2c, 0x3e, 0x50) } else { Color32::from_rgb(0x7f, 0x8c, 0x8d) },
+            );
+
+            if resp.clicked() {
+                clicked_tab = Some(*variant);
+            }
+        }
+
+        if let Some(tab) = clicked_tab {
+            self.sub_tab = tab;
+        }
+
+        ui.painter().hline(tr.x_range(), tr.bottom(), Stroke::new(1.0, t.border));
+
+        // 3. 面板主体内容区域（纯白底色，StackEdit 字体与样式）
+        egui::Frame::NONE
+            .fill(Color32::WHITE)
+            .inner_margin(Margin::same(12))
+            .show(ui, |ui| {
+                let avail_h = ui.available_height() - 10.0;
+                match self.sub_tab {
+                    DocSubTab::Edit => {
+                        egui::ScrollArea::vertical()
+                            .id_salt("stackedit_editor_scroll")
+                            .auto_shrink([false, false])
+                            .max_height(avail_h)
+                            .show(ui, |ui| {
+                                let font_id = egui::FontId::new(16.0, egui::FontFamily::Proportional);
+                                ui.add(
+                                    egui::TextEdit::multiline(&mut self.content)
+                                        .desired_width(ui.available_width())
+                                        .desired_rows(((avail_h / 24.0) as usize).max(10))
+                                        .font(font_id)
+                                        .text_color(Color32::from_rgb(0x2c, 0x3e, 0x50))
+                                        .frame(egui::Frame::NONE),
+                                );
+                            });
                     }
-                    #[cfg(not(target_arch = "wasm32"))]
-                    {
-                        let _ = std::fs::write(filename, &self.content);
-                        self.status_notice = Some(format!("已保存至 {filename}"));
+                    DocSubTab::Preview => {
+                        egui::ScrollArea::vertical()
+                            .id_salt("stackedit_preview_scroll")
+                            .auto_shrink([false, false])
+                            .max_height(avail_h)
+                            .show(ui, |ui| {
+                                render_stackedit_markdown(ui, &self.content);
+                            });
                     }
                 }
-
-                if ui.button("📋 复制").on_hover_text("复制全部 Markdown 文本到剪贴板").clicked() {
-                    ui.ctx().copy_text(self.content.clone());
-                    self.status_notice = Some("已复制到剪贴板".into());
-                }
-
-                if ui.button("🔄 模板").on_hover_text("重置为工程设计说明模板").clicked() {
-                    self.content = DEFAULT_DOC_TEMPLATE.to_string();
-                    self.status_notice = Some("已恢复默认模板".into());
-                }
-
-                if ui.button("🗑️ 清空").on_hover_text("清空文档内容").clicked() {
-                    self.content.clear();
-                    self.status_notice = Some("文档已清空".into());
-                }
-
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("✕").on_hover_text("隐藏文档面板").clicked() {
-                        *is_visible = false;
-                    }
-                });
             });
-
-            // 状态通知小提示
-            if let Some(notice) = &self.status_notice {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new(format!("✓ {notice}")).size(11.5).color(accent_color));
-                });
-            }
-
-            ui.separator();
-
-            // 快捷插入格式工具条（在编辑和双栏模式显示）
-            if self.mode != DocMode::Preview {
-                ui.horizontal_wrapped(|ui| {
-                    ui.spacing_mut().item_spacing = Vec2::new(3.0, 2.0);
-                    if ui.small_button("H1").on_hover_text("一级标题").clicked() {
-                        insert_snippet(&mut self.content, "\n# 标题名称\n");
-                    }
-                    if ui.small_button("H2").on_hover_text("二级标题").clicked() {
-                        insert_snippet(&mut self.content, "\n## 标题名称\n");
-                    }
-                    if ui.small_button("H3").on_hover_text("三级标题").clicked() {
-                        insert_snippet(&mut self.content, "\n### 标题名称\n");
-                    }
-                    if ui.small_button("B 粗体").on_hover_text("加粗").clicked() {
-                        insert_snippet(&mut self.content, "**粗体文字**");
-                    }
-                    if ui.small_button("I 斜体").on_hover_text("斜体").clicked() {
-                        insert_snippet(&mut self.content, "*斜体文字*");
-                    }
-                    if ui.small_button("> 引用").on_hover_text("引用块").clicked() {
-                        insert_snippet(&mut self.content, "\n> 引用内容\n");
-                    }
-                    if ui.small_button("`代码`").on_hover_text("行内代码").clicked() {
-                        insert_snippet(&mut self.content, "`code`");
-                    }
-                    if ui.small_button("```代码块").on_hover_text("多行代码块").clicked() {
-                        insert_snippet(&mut self.content, "\n```rust\n// 代码块\n```\n");
-                    }
-                    if ui.small_button("• 列表").on_hover_text("无序列表").clicked() {
-                        insert_snippet(&mut self.content, "\n- 列表项\n");
-                    }
-                    if ui.small_button("1. 序号").on_hover_text("有序列表").clicked() {
-                        insert_snippet(&mut self.content, "\n1. 序号项\n");
-                    }
-                    if ui.small_button("☑ 待办").on_hover_text("待办任务列表").clicked() {
-                        insert_snippet(&mut self.content, "\n- [ ] 待办任务项\n");
-                    }
-                    if ui.small_button("📊 表格").on_hover_text("插入数据表格").clicked() {
-                        insert_snippet(&mut self.content, "\n| 列1 | 列2 | 列3 |\n| :--- | :--- | :--- |\n| 单元格 | 单元格 | 单元格 |\n");
-                    }
-                    if ui.small_button("--- 分割线").on_hover_text("水平分割线").clicked() {
-                        insert_snippet(&mut self.content, "\n---\n");
-                    }
-                });
-                ui.separator();
-            }
-
-            // --- 主体区域 ---
-            let available_height = ui.available_height() - 24.0;
-            let mode = self.mode;
-
-            match mode {
-                DocMode::Edit => {
-                    ui.allocate_ui_with_layout(
-                        Vec2::new(ui.available_width(), available_height),
-                        egui::Layout::top_down(egui::Align::Min),
-                        |ui| {
-                            render_editor(ui, &mut self.content, available_height);
-                        },
-                    );
-                }
-                DocMode::Preview => {
-                    egui::ScrollArea::vertical()
-                        .id_salt("doc_preview_scroll")
-                        .auto_shrink([false, false])
-                        .max_height(available_height)
-                        .show(ui, |ui| {
-                            render_markdown(ui, &self.content);
-                        });
-                }
-                DocMode::Split => {
-                    let total_width = ui.available_width();
-                    let half_width = (total_width - 8.0) * 0.5;
-
-                    ui.horizontal(|ui| {
-                        // 左半部分：源码编辑
-                        ui.allocate_ui_with_layout(
-                            Vec2::new(half_width, available_height),
-                            egui::Layout::top_down(egui::Align::Min),
-                            |ui| {
-                                ui.label(RichText::new("源码编辑").size(11.0).color(Color32::from_gray(160)));
-                                render_editor(ui, &mut self.content, available_height - 18.0);
-                            },
-                        );
-
-                        ui.separator();
-
-                        // 右半部分：实时渲染
-                        ui.allocate_ui_with_layout(
-                            Vec2::new(ui.available_width(), available_height),
-                            egui::Layout::top_down(egui::Align::Min),
-                            |ui| {
-                                ui.label(RichText::new("实时预览").size(11.0).color(Color32::from_gray(160)));
-                                egui::ScrollArea::vertical()
-                                    .id_salt("doc_split_preview_scroll")
-                                    .auto_shrink([false, false])
-                                    .max_height(available_height - 18.0)
-                                    .show(ui, |ui| {
-                                        render_markdown(ui, &self.content);
-                                    });
-                            },
-                        );
-                    });
-                }
-            }
-
-            // --- 底部统计信息 ---
-            ui.separator();
-            ui.horizontal(|ui| {
-                let line_count = self.content.lines().count();
-                let char_count = self.content.chars().count();
-                let word_count = self.content.split_whitespace().count();
-
-                ui.label(
-                    RichText::new(format!("行数: {line_count}   字数: {char_count}   词数: {word_count}"))
-                        .size(11.0)
-                        .color(Color32::from_gray(140)),
-                );
-            });
-        });
     }
 }
 
-fn insert_snippet(content: &mut String, snippet: &str) {
-    content.push_str(snippet);
-}
-
-fn render_editor(ui: &mut Ui, content: &mut String, height: f32) {
-    egui::ScrollArea::vertical()
-        .id_salt("doc_editor_scroll")
-        .auto_shrink([false, false])
-        .max_height(height)
-        .show(ui, |ui| {
-            ui.add(
-                egui::TextEdit::multiline(content)
-                    .desired_width(ui.available_width())
-                    .desired_rows(((height / 18.0) as usize).max(8))
-                    .font(egui::FontId::new(12.0, egui::FontFamily::Monospace)),
-            );
-        });
-}
-
-/// 解析并渲染 Markdown 内容
-pub fn render_markdown(ui: &mut Ui, markdown: &str) {
-    let text_color = Color32::from_rgb(0xd7, 0xdb, 0xe0);
-    let accent_color = Color32::from_rgb(0x3d, 0x8b, 0xfd);
-    let code_bg = Color32::from_rgb(0x28, 0x2e, 0x38);
-    let border_color = Color32::from_rgb(0x38, 0x40, 0x4c);
+/// 按照 StackEdit 风格渲染 Markdown 文档内容 (白底色，清爽优雅排版)
+pub fn render_stackedit_markdown(ui: &mut Ui, markdown: &str) {
+    let text_color = Color32::from_rgb(0x2c, 0x3e, 0x50);       // #2c3e50 (StackEdit 默认深蓝灰字色)
+    let heading_color = Color32::from_rgb(0x1a, 0x25, 0x2f);    // #1a252f
+    let accent_color = Color32::from_rgb(0x3d, 0x8b, 0xfd);     // #3d8bfd
+    let code_bg = Color32::from_rgb(0xf6, 0xf8, 0xfa);          // #f6f8fa
+    let border_color = Color32::from_rgb(0xe1, 0xe4, 0xe8);     // #e1e4e8
 
     let mut in_code_block = false;
     let mut code_buffer = String::new();
@@ -330,15 +264,13 @@ pub fn render_markdown(ui: &mut Ui, markdown: &str) {
                     .fill(code_bg)
                     .stroke(Stroke::new(1.0, border_color))
                     .corner_radius(4.0)
-                    .inner_margin(8.0)
+                    .inner_margin(Margin::same(10))
                     .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.label(
-                                RichText::new(&code_buffer)
-                                    .font(egui::FontId::new(12.0, egui::FontFamily::Monospace))
-                                    .color(text_color),
-                            );
-                        });
+                        ui.label(
+                            RichText::new(&code_buffer)
+                                .font(egui::FontId::new(14.0, egui::FontFamily::Monospace))
+                                .color(Color32::from_rgb(0x24, 0x29, 0x2e)),
+                        );
                     });
                 code_buffer.clear();
                 in_code_block = false;
@@ -369,60 +301,66 @@ pub fn render_markdown(ui: &mut Ui, markdown: &str) {
             }
             continue;
         } else if !table_rows.is_empty() {
-            render_table(ui, &table_rows, code_bg, border_color, text_color);
+            render_stackedit_table(ui, &table_rows, code_bg, border_color, text_color);
             table_rows.clear();
         }
 
         // 3. 空行
         if trimmed.is_empty() {
-            ui.add_space(4.0);
+            ui.add_space(6.0);
             continue;
         }
 
         // 4. 水平分割线
         if trimmed == "---" || trimmed == "***" || trimmed == "___" {
-            ui.add_space(4.0);
-            ui.separator();
-            ui.add_space(4.0);
+            ui.add_space(6.0);
+            let (sep_r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
+            ui.painter().hline(sep_r.x_range(), sep_r.center().y, Stroke::new(1.0, border_color));
+            ui.add_space(6.0);
             continue;
         }
 
-        // 5. 标题处理
+        // 5. 标题处理 (StackEdit 风格字号与底边线)
         if let Some(h1) = trimmed.strip_prefix("# ") {
-            ui.add_space(8.0);
-            ui.label(RichText::new(h1).size(18.0).strong().color(text_color));
-            ui.separator();
+            ui.add_space(10.0);
+            ui.label(RichText::new(h1).size(22.0).strong().color(heading_color));
+            let (sep_r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
+            ui.painter().hline(sep_r.x_range(), sep_r.center().y, Stroke::new(1.0, border_color));
             ui.add_space(4.0);
             continue;
         }
         if let Some(h2) = trimmed.strip_prefix("## ") {
-            ui.add_space(6.0);
-            ui.label(RichText::new(h2).size(15.5).strong().color(text_color));
-            ui.add_space(2.0);
+            ui.add_space(8.0);
+            ui.label(RichText::new(h2).size(18.5).strong().color(heading_color));
+            let (sep_r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
+            ui.painter().hline(sep_r.x_range(), sep_r.center().y, Stroke::new(1.0, border_color));
+            ui.add_space(3.0);
             continue;
         }
         if let Some(h3) = trimmed.strip_prefix("### ") {
-            ui.add_space(4.0);
-            ui.label(RichText::new(h3).size(13.5).strong().color(text_color));
+            ui.add_space(6.0);
+            ui.label(RichText::new(h3).size(16.0).strong().color(heading_color));
             continue;
         }
         if let Some(h4) = trimmed.strip_prefix("#### ") {
-            ui.label(RichText::new(h4).size(12.5).strong().color(Color32::from_gray(160)));
+            ui.add_space(4.0);
+            ui.label(RichText::new(h4).size(14.5).strong().color(Color32::from_rgb(0x4a, 0x55, 0x68)));
             continue;
         }
 
-        // 6. 引用块
+        // 6. 引用块 (StackEdit 风格绿/蓝条左边框)
         if let Some(quote) = trimmed.strip_prefix("> ") {
             egui::Frame::new()
                 .fill(code_bg)
-                .stroke(Stroke::new(1.0, border_color))
-                .corner_radius(2.0)
-                .inner_margin(6.0)
+                .stroke(Stroke::NONE)
+                .corner_radius(CornerRadius::same(2))
+                .inner_margin(Margin::symmetric(10, 6))
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        ui.painter().vline(ui.min_rect().left() + 2.0, ui.min_rect().y_range(), Stroke::new(3.0, accent_color));
-                        ui.add_space(4.0);
-                        render_formatted_inline(ui, quote, text_color, code_bg, accent_color);
+                        let vr = ui.min_rect();
+                        ui.painter().vline(vr.left() + 1.0, vr.y_range(), Stroke::new(3.5, Color32::from_rgb(0x42, 0xb9, 0x83)));
+                        ui.add_space(6.0);
+                        render_formatted_text(ui, quote, text_color, code_bg, accent_color);
                     });
                 });
             continue;
@@ -433,7 +371,7 @@ pub fn render_markdown(ui: &mut Ui, markdown: &str) {
             ui.horizontal(|ui| {
                 let mut checked = false;
                 ui.checkbox(&mut checked, "");
-                render_formatted_inline(ui, task, text_color, code_bg, accent_color);
+                render_formatted_text(ui, task, text_color, code_bg, accent_color);
             });
             continue;
         }
@@ -441,7 +379,7 @@ pub fn render_markdown(ui: &mut Ui, markdown: &str) {
             ui.horizontal(|ui| {
                 let mut checked = true;
                 ui.checkbox(&mut checked, "");
-                render_formatted_inline(ui, task, text_color, code_bg, accent_color);
+                render_formatted_text(ui, task, text_color, code_bg, accent_color);
             });
             continue;
         }
@@ -449,8 +387,8 @@ pub fn render_markdown(ui: &mut Ui, markdown: &str) {
         // 8. 无序列表
         if let Some(item) = trimmed.strip_prefix("- ").or_else(|| trimmed.strip_prefix("* ")) {
             ui.horizontal(|ui| {
-                ui.label(RichText::new("  •").color(accent_color).strong());
-                render_formatted_inline(ui, item, text_color, code_bg, accent_color);
+                ui.label(RichText::new("  •").size(15.0).color(accent_color).strong());
+                render_formatted_text(ui, item, text_color, code_bg, accent_color);
             });
             continue;
         }
@@ -458,20 +396,20 @@ pub fn render_markdown(ui: &mut Ui, markdown: &str) {
         // 9. 有序列表
         if let Some((num, rest)) = parse_ordered_list(trimmed) {
             ui.horizontal(|ui| {
-                ui.label(RichText::new(format!("  {num}.")).color(accent_color));
-                render_formatted_inline(ui, rest, text_color, code_bg, accent_color);
+                ui.label(RichText::new(format!("  {num}.")).size(14.5).color(accent_color));
+                render_formatted_text(ui, rest, text_color, code_bg, accent_color);
             });
             continue;
         }
 
-        // 10. 普通文本段落
+        // 10. 普通段落
         ui.horizontal_wrapped(|ui| {
-            render_formatted_inline(ui, trimmed, text_color, code_bg, accent_color);
+            render_formatted_text(ui, trimmed, text_color, code_bg, accent_color);
         });
     }
 
     if !table_rows.is_empty() {
-        render_table(ui, &table_rows, code_bg, border_color, text_color);
+        render_stackedit_table(ui, &table_rows, code_bg, border_color, text_color);
     }
 }
 
@@ -482,27 +420,27 @@ fn parse_ordered_list(s: &str) -> Option<(usize, &str)> {
     Some((num, &s[dot_idx + 2..]))
 }
 
-fn render_table(ui: &mut Ui, rows: &[Vec<String>], bg: Color32, border: Color32, text: Color32) {
+fn render_stackedit_table(ui: &mut Ui, rows: &[Vec<String>], bg: Color32, border: Color32, text: Color32) {
     if rows.is_empty() {
         return;
     }
     ui.add_space(4.0);
     egui::Frame::new()
-        .fill(bg)
+        .fill(Color32::WHITE)
         .stroke(Stroke::new(1.0, border))
-        .corner_radius(3.0)
-        .inner_margin(6.0)
+        .corner_radius(CornerRadius::same(3))
+        .inner_margin(Margin::same(8))
         .show(ui, |ui| {
-            egui::Grid::new("md_table_grid")
+            egui::Grid::new("stackedit_table_grid")
                 .striped(true)
-                .spacing(Vec2::new(12.0, 4.0))
+                .spacing(Vec2::new(14.0, 6.0))
                 .show(ui, |ui| {
                     for (row_idx, row) in rows.iter().enumerate() {
                         for cell in row {
                             if row_idx == 0 {
-                                ui.label(RichText::new(clean_markdown_syntax(cell)).strong().color(text));
+                                ui.label(RichText::new(clean_markdown_syntax(cell)).strong().size(13.5).color(text));
                             } else {
-                                render_formatted_inline(ui, cell, text, bg, Color32::from_rgb(0x3d, 0x8b, 0xfd));
+                                render_formatted_text(ui, cell, text, bg, Color32::from_rgb(0x3d, 0x8b, 0xfd));
                             }
                         }
                         ui.end_row();
@@ -513,22 +451,21 @@ fn render_table(ui: &mut Ui, rows: &[Vec<String>], bg: Color32, border: Color32,
 }
 
 fn clean_markdown_syntax(s: &str) -> String {
-    s.replace("**", "").replace('*', "").replace('`', "")
+    s.replace("**", "").replace("~~", "").replace(['*', '`'], "")
 }
 
 /// 内联格式化渲染（粗体、斜体、代码、普通文字）
-fn render_formatted_inline(ui: &mut Ui, text: &str, text_color: Color32, code_bg: Color32, accent: Color32) {
+fn render_formatted_text(ui: &mut Ui, text: &str, text_color: Color32, code_bg: Color32, accent: Color32) {
     let mut i = 0;
     let chars: Vec<char> = text.chars().collect();
     let len = chars.len();
-
     let mut buf = String::new();
 
     while i < len {
         // **粗体**
         if i + 1 < len && chars[i] == '*' && chars[i + 1] == '*' {
             if !buf.is_empty() {
-                ui.label(RichText::new(&buf).color(text_color));
+                ui.label(RichText::new(&buf).size(15.0).color(text_color));
                 buf.clear();
             }
             i += 2;
@@ -537,7 +474,26 @@ fn render_formatted_inline(ui: &mut Ui, text: &str, text_color: Color32, code_bg
                 i += 1;
             }
             let bold_text: String = chars[start..i].iter().collect();
-            ui.label(RichText::new(bold_text).strong().color(text_color));
+            ui.label(RichText::new(bold_text).size(15.0).strong().color(text_color));
+            if i + 1 < len {
+                i += 2;
+            }
+            continue;
+        }
+
+        // ~~删除线~~
+        if i + 1 < len && chars[i] == '~' && chars[i + 1] == '~' {
+            if !buf.is_empty() {
+                ui.label(RichText::new(&buf).size(15.0).color(text_color));
+                buf.clear();
+            }
+            i += 2;
+            let start = i;
+            while i + 1 < len && !(chars[i] == '~' && chars[i + 1] == '~') {
+                i += 1;
+            }
+            let strike_text: String = chars[start..i].iter().collect();
+            ui.label(RichText::new(strike_text).size(15.0).strikethrough().color(Color32::from_rgb(0x7f, 0x8c, 0x8d)));
             if i + 1 < len {
                 i += 2;
             }
@@ -547,7 +503,7 @@ fn render_formatted_inline(ui: &mut Ui, text: &str, text_color: Color32, code_bg
         // *斜体*
         if chars[i] == '*' {
             if !buf.is_empty() {
-                ui.label(RichText::new(&buf).color(text_color));
+                ui.label(RichText::new(&buf).size(15.0).color(text_color));
                 buf.clear();
             }
             i += 1;
@@ -556,7 +512,7 @@ fn render_formatted_inline(ui: &mut Ui, text: &str, text_color: Color32, code_bg
                 i += 1;
             }
             let italic_text: String = chars[start..i].iter().collect();
-            ui.label(RichText::new(italic_text).italics().color(text_color));
+            ui.label(RichText::new(italic_text).size(15.0).italics().color(text_color));
             if i < len {
                 i += 1;
             }
@@ -566,7 +522,7 @@ fn render_formatted_inline(ui: &mut Ui, text: &str, text_color: Color32, code_bg
         // `代码`
         if chars[i] == '`' {
             if !buf.is_empty() {
-                ui.label(RichText::new(&buf).color(text_color));
+                ui.label(RichText::new(&buf).size(15.0).color(text_color));
                 buf.clear();
             }
             i += 1;
@@ -577,7 +533,7 @@ fn render_formatted_inline(ui: &mut Ui, text: &str, text_color: Color32, code_bg
             let code_text: String = chars[start..i].iter().collect();
             ui.label(
                 RichText::new(code_text)
-                    .font(egui::FontId::new(12.0, egui::FontFamily::Monospace))
+                    .font(egui::FontId::new(13.5, egui::FontFamily::Monospace))
                     .background_color(code_bg)
                     .color(accent),
             );
@@ -592,6 +548,6 @@ fn render_formatted_inline(ui: &mut Ui, text: &str, text_color: Color32, code_bg
     }
 
     if !buf.is_empty() {
-        ui.label(RichText::new(buf).color(text_color));
+        ui.label(RichText::new(buf).size(15.0).color(text_color));
     }
 }
