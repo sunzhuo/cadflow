@@ -45,6 +45,7 @@ mod web {
         show_help_dialog: bool,
         font_data: Option<Arc<egui::FontData>>,
         font_installed: bool,
+        opened_windows: std::collections::HashMap<egui::LayerId, egui::emath::TSTransform>,
     }
 
     impl eframe::App for Shell {
@@ -58,6 +59,12 @@ mod web {
             self.app.ui.start_tab = false;
             if self.app.session.docs.is_empty() {
                 let _ = self.app.run("new", serde_json::json!({}));
+                if let Ok(st) = self.app.session.state_mut() {
+                    st.set_view_quiet(cadcraft_engine::View {
+                        center: cadcraft_geom::Vec2::new(0.0, 0.0),
+                        height: 100.0,
+                    });
+                }
             }
 
             self.app.logic(ctx);
@@ -135,12 +142,20 @@ mod web {
                 cadcraft_ui_egui::chrome::status_bar(&mut self.app, ui);
 
                 // 3. 左侧侧边栏面板（包含工具集/图层/块/组与高度可调整的特性面板，Req 1, 2, 7）
+                // 出现时面板右边界右移 2 像素，消除与工具栏边界线的偏移
                 if self.show_sidebar {
+                    let sb_w = self.sidebar_width + 2.0;
+                    ui.ctx().data_mut(|d| {
+                        if let Some(mut state) = d.get_persisted::<egui::panel::PanelState>(egui::Id::new("cadflow_left_sidebar")) {
+                            state.outer_rect.max.x = state.outer_rect.min.x + sb_w;
+                            d.insert_persisted(egui::Id::new("cadflow_left_sidebar"), state);
+                        }
+                    });
                     let sb_resp = egui::Panel::left("cadflow_left_sidebar")
                         .resizable(true)
-                        .default_size(self.sidebar_width)
-                        .min_size(crate::buerligons::SIDEBAR_MIN_WIDTH)
-                        .max_size(crate::buerligons::SIDEBAR_MAX_WIDTH)
+                        .default_size(sb_w)
+                        .min_size(crate::buerligons::SIDEBAR_MIN_WIDTH + 2.0)
+                        .max_size(crate::buerligons::SIDEBAR_MAX_WIDTH + 2.0)
                         .frame(
                             egui::Frame::NONE
                                 .fill(Tokens::get().panel)
@@ -149,20 +164,22 @@ mod web {
                         .show(ui, |ui| {
                             self.sidebar_state.ui(ui, &mut self.app);
                         });
-                    self.sidebar_width = sb_resp.response.rect.width();
+                    self.sidebar_width = sb_resp.response.rect.width() - 2.0;
                 }
 
                 // 4. 右侧文档面板（平滑滑动展开/折叠，纯白底色，StackEdit 样式，Req 9, 10, 11）
+                // 出现时面板左边界左移 2 像素，消除与工具栏边界线的偏移
                 let slide_progress = ui.ctx().animate_bool(egui::Id::new("cadflow_doc_slide"), self.show_doc_panel);
                 if slide_progress > 0.001 {
                     let full_w = self.doc_width.clamp(crate::buerligons::DOC_MIN_WIDTH, crate::buerligons::DOC_MAX_WIDTH);
                     let effective_w = full_w * slide_progress;
+                    let doc_w = effective_w + 2.0;
 
                     let doc_resp = egui::Panel::right("cadflow_document_side_panel")
                         .resizable(slide_progress >= 0.99)
-                        .exact_size(effective_w)
-                        .min_size(crate::buerligons::DOC_MIN_WIDTH)
-                        .max_size(crate::buerligons::DOC_MAX_WIDTH)
+                        .exact_size(doc_w)
+                        .min_size(crate::buerligons::DOC_MIN_WIDTH + 2.0)
+                        .max_size(crate::buerligons::DOC_MAX_WIDTH + 2.0)
                         .frame(
                             egui::Frame::NONE
                                 .fill(Tokens::get().panel)
@@ -173,7 +190,7 @@ mod web {
                         });
 
                     if slide_progress >= 0.99 {
-                        self.doc_width = doc_resp.response.rect.width();
+                        self.doc_width = doc_resp.response.rect.width() - 2.0;
                     }
                 }
 
@@ -208,6 +225,50 @@ mod web {
                     if !open {
                         self.show_help_dialog = false;
                     }
+                }
+
+                // 8. 自动居中所有由按钮或菜单弹出的对话框窗口 (Req: 对话框在屏幕居中)
+                let screen = ui.ctx().content_rect();
+                let current_visible_windows: Vec<egui::LayerId> = ui.ctx().memory(|mem| {
+                    mem.areas()
+                        .visible_layer_ids()
+                        .into_iter()
+                        .filter(|l| l.order == egui::Order::Middle)
+                        .collect()
+                });
+
+                for layer_id in &current_visible_windows {
+                    if !self.opened_windows.contains_key(layer_id) {
+                        let rect = ui.ctx().memory(|mem| mem.area_rect(layer_id.id));
+                        if let Some(rect) = rect {
+                            let sz = rect.size();
+                            let center_x = screen.left() + (screen.width() - sz.x).max(0.0) * 0.5;
+                            let center_y = screen.top() + (screen.height() - sz.y).max(0.0) * 0.5;
+                            let offset = egui::vec2(center_x - rect.left(), center_y - rect.top());
+                            let transform = egui::emath::TSTransform::from_translation(offset);
+                            ui.ctx().set_transform_layer(*layer_id, transform);
+                            let children: Vec<egui::LayerId> = ui.ctx().memory(|mem| mem.areas().child_layers(*layer_id).collect());
+                            for child in children {
+                                ui.ctx().set_transform_layer(child, transform);
+                            }
+                            self.opened_windows.insert(*layer_id, transform);
+                        }
+                    } else if let Some(&transform) = self.opened_windows.get(layer_id) {
+                        let children: Vec<egui::LayerId> = ui.ctx().memory(|mem| mem.areas().child_layers(*layer_id).collect());
+                        for child in children {
+                            ui.ctx().set_transform_layer(child, transform);
+                        }
+                    }
+                }
+                let closed: Vec<egui::LayerId> = self
+                    .opened_windows
+                    .keys()
+                    .filter(|l| !current_visible_windows.contains(l))
+                    .copied()
+                    .collect();
+                for layer_id in closed {
+                    ui.ctx().set_transform_layer(layer_id, egui::emath::TSTransform::IDENTITY);
+                    self.opened_windows.remove(&layer_id);
                 }
 
                 if let Some((bridge, reported)) = &self.host {
@@ -331,6 +392,19 @@ mod web {
                             let _ = app.run("new", serde_json::json!({}));
                         }
 
+                        // 程序启动时画布显示原点 (0, 0)，并缩放到适当的比例 (Req: 画布显示原点并适度缩放)
+                        if let Ok(st) = app.session.state_mut() {
+                            let ext = st.doc.extents(&cadcraft_doc::Space::Model);
+                            if ext.is_empty() {
+                                st.set_view_quiet(cadcraft_engine::View {
+                                    center: cadcraft_geom::Vec2::new(0.0, 0.0),
+                                    height: 100.0,
+                                });
+                            } else {
+                                let _ = app.session.zoom_extents();
+                            }
+                        }
+
                         if !crate::wants_cpu(&query())
                             && let Some(rs) = &cc.wgpu_render_state
                         {
@@ -367,6 +441,7 @@ mod web {
                             show_help_dialog: false,
                             font_data,
                             font_installed: false,
+                            opened_windows: std::collections::HashMap::new(),
                         }))
                     }),
                 )

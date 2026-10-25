@@ -117,6 +117,9 @@ pub fn draw_collapsed_menu(
     style.spacing.interact_size = vec2(64.0, 28.0);
     style.spacing.button_padding = vec2(9.0, 5.0);
     style.spacing.item_spacing = vec2(4.0, 2.0);
+    // 保持 CADFlow 菜单按钮字体为 12.5px 并禁止折行
+    style.text_styles.insert(egui::TextStyle::Button, egui::FontId::proportional(12.5));
+    style.wrap_mode = Some(egui::TextWrapMode::Extend);
 
     style.visuals.window_fill = t.chrome;
     style.visuals.window_corner_radius = CornerRadius::same(10);
@@ -338,14 +341,14 @@ pub fn draw_top_toolbar(
             // [2] 分割线
             ui.scope_builder(
                 egui::UiBuilder::new().max_rect(Rect::from_min_size(
-                    pos2(cursor_x, total_rect.center().y - 10.0),
-                    vec2(8.0, 20.0),
+                    pos2(cursor_x, total_rect.center().y - TOOL_SIZE / 2.0),
+                    vec2(10.0, TOOL_SIZE),
                 )),
                 |ui| {
                     draw_toolbar_sep(ui);
                 },
             );
-            cursor_x += 8.0 + TOOL_SPACING;
+            cursor_x += 10.0 + TOOL_SPACING;
 
             // [3] 撤销 (Undo)
             let undo_tip = format!("{} ({})", crate::sidebar::tr_ui("Undo"), format_shortcut("Cmd+Z", mac));
@@ -381,15 +384,14 @@ pub fn draw_top_toolbar(
                     }
                 },
             );
-            cursor_x += TOOL_SIZE + TOOL_SPACING;
 
             // [5] CAD 侧边栏按钮与垂直边界线位置计算 (Req 3, Req 4)
+            let min_sb_btn_x = total_rect.left() + SIDEBAR_MIN_WIDTH - TOOL_SIZE - 4.0;
             let (sb_btn_x, boundary_x) = if is_sb_open {
                 let bx = total_rect.left() + current_sidebar_w;
-                (bx - TOOL_SIZE - 4.0, bx)
+                ((bx - TOOL_SIZE - 4.0).max(min_sb_btn_x), bx)
             } else {
-                let bx = cursor_x + 2.0;
-                (bx, bx + TOOL_SIZE + 4.0)
+                (min_sb_btn_x, min_sb_btn_x + TOOL_SIZE + 4.0)
             };
 
             ui.scope_builder(
@@ -584,6 +586,8 @@ pub fn show_cadflow_help_dialog(app: &mut CadApp, ctx: &egui::Context, open: &mu
         .id(egui::Id::new("cadflow_help_window"))
         .open(open)
         .default_size(vec2(640.0, 480.0))
+        .pivot(egui::Align2::CENTER_CENTER)
+        .default_pos(ctx.content_rect().center())
         .show(ctx, |ui| {
             let id = ui.id().with("help_tab");
             let mut active_tab = ui.data_mut(|d| d.get_temp::<usize>(id)).unwrap_or(0);

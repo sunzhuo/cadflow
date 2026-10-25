@@ -686,6 +686,7 @@ dependencies = [
  "cadcraft-color",
  "cadcraft-doc",
  "cadcraft-engine",
+ "cadcraft-geom",
  "cadcraft-io",
  "cadcraft-ui-egui",
  "craft-ui",

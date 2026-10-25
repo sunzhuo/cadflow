@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 pub enum DocSubTab {
     #[default]
     Edit,
+    Split,
     Preview,
 }
 
@@ -180,8 +181,12 @@ impl DocState {
         let (sub_bar_rect, _) = ui.allocate_exact_size(vec2(full_w, sub_h), Sense::hover());
         p.rect_filled(sub_bar_rect, 0.0, t.chrome);
 
-        let subtabs = [(DocSubTab::Edit, "编辑"), (DocSubTab::Preview, "预览")];
-        let sub_w = 72.0;
+        let subtabs = [
+            (DocSubTab::Edit, "编辑"),
+            (DocSubTab::Split, "分栏"),
+            (DocSubTab::Preview, "预览"),
+        ];
+        let sub_w = 64.0;
         let mut sub_x = sub_bar_rect.left();
         let mut clicked_sub = None;
 
@@ -212,7 +217,7 @@ impl DocState {
         // 子标签和下面的面板内容之间没有横线 (Req 1)
 
         // --------------------------------------------------------------------
-        // 3. 文档内容区域（纯白色背景，字号放大，包含编辑框或原生 CommonMark 渲染器，Req 8, 11）
+        // 3. 文档内容区域（纯白色背景，支持即时 Markdown 语法高亮预览与分栏实时渲染，Req: 参考 StackEdit）
         // --------------------------------------------------------------------
         let content_rect = Rect::from_min_max(pos2(sub_bar_rect.left(), sub_bar_rect.bottom()), ui.max_rect().max);
         ui.painter().rect_filled(content_rect, 0.0, Color32::WHITE);
@@ -227,9 +232,9 @@ impl DocState {
                 ui.visuals_mut().widgets.inactive.fg_stroke = Stroke::new(1.0, text_color);
 
                 let mut style = (**ui.style()).clone();
-                style.text_styles.insert(egui::TextStyle::Body, egui::FontId::proportional(15.5));
+                style.text_styles.insert(egui::TextStyle::Body, egui::FontId::proportional(15.0));
                 style.text_styles.insert(egui::TextStyle::Heading, egui::FontId::proportional(20.0));
-                style.text_styles.insert(egui::TextStyle::Monospace, egui::FontId::monospace(14.5));
+                style.text_styles.insert(egui::TextStyle::Monospace, egui::FontId::monospace(14.0));
                 ui.set_style(style);
 
                 match self.sub_tab {
@@ -242,9 +247,56 @@ impl DocState {
                                     egui::TextEdit::multiline(&mut self.content)
                                         .desired_width(f32::INFINITY)
                                         .frame(egui::Frame::NONE)
-                                        .font(egui::FontId::proportional(15.5)),
+                                        .layouter(&mut |ui, text, wrap_width| {
+                                            markdown_layouter(ui, text, wrap_width)
+                                        }),
                                 );
                             });
+                    }
+                    DocSubTab::Split => {
+                        let avail_w = ui.available_width();
+                        let half_w = ((avail_w - 12.0) * 0.5).max(100.0);
+                        ui.horizontal(|ui| {
+                            // 左半侧：Markdown 实时格式高亮编辑器
+                            ui.allocate_ui_with_layout(
+                                vec2(half_w, ui.available_height()),
+                                egui::Layout::top_down(egui::Align::Min),
+                                |ui| {
+                                    egui::ScrollArea::vertical()
+                                        .id_salt("cadflow_doc_split_edit_scroll")
+                                        .auto_shrink([false, false])
+                                        .show(ui, |ui| {
+                                            ui.add(
+                                                egui::TextEdit::multiline(&mut self.content)
+                                                    .desired_width(f32::INFINITY)
+                                                    .frame(egui::Frame::NONE)
+                                                    .layouter(&mut |ui, text, wrap_width| {
+                                                        markdown_layouter(ui, text, wrap_width)
+                                                    }),
+                                            );
+                                        });
+                                },
+                            );
+
+                            // 分隔坚线
+                            let (div_rect, _) = ui.allocate_exact_size(vec2(2.0, ui.available_height()), Sense::hover());
+                            ui.painter().vline(div_rect.center().x, div_rect.y_range(), Stroke::new(1.0, Color32::from_rgb(0xe1, 0xe4, 0xe8)));
+
+                            // 右半侧：全隐藏标记的纯净 Markdown 原生预览
+                            ui.allocate_ui_with_layout(
+                                vec2(ui.available_width(), ui.available_height()),
+                                egui::Layout::top_down(egui::Align::Min),
+                                |ui| {
+                                    egui::ScrollArea::vertical()
+                                        .id_salt("cadflow_doc_split_preview_scroll")
+                                        .auto_shrink([false, false])
+                                        .show(ui, |ui| {
+                                            ui.spacing_mut().item_spacing = vec2(0.0, 10.0);
+                                            egui_commonmark::CommonMarkViewer::new().show(ui, &mut self.cache, &self.content);
+                                        });
+                                },
+                            );
+                        });
                     }
                     DocSubTab::Preview => {
                         egui::ScrollArea::vertical()
@@ -258,5 +310,209 @@ impl DocState {
                 }
             },
         );
+    }
+}
+
+/// 仿 StackEdit 风格的 Markdown 编辑器语法即时高亮与格式预览 layouter
+pub fn markdown_layouter(ui: &Ui, text: &dyn egui::text_edit::TextBuffer, wrap_width: f32) -> std::sync::Arc<egui::Galley> {
+    let s = text.as_str();
+    let mut job = egui::text::LayoutJob::default();
+    job.wrap.max_width = wrap_width;
+
+    let base_color = Color32::from_rgb(0x24, 0x29, 0x2f);
+    let marker_color = Color32::from_rgb(0x8c, 0x95, 0x9f);
+    let quote_color = Color32::from_rgb(0x57, 0x60, 0x6a);
+    let code_color = Color32::from_rgb(0xc7, 0x25, 0x4e);
+    let code_bg = Color32::from_rgb(0xf6, 0xf8, 0xfa);
+    let link_color = Color32::from_rgb(0x09, 0x69, 0xda);
+    let list_marker_color = Color32::from_rgb(0x1a, 0x7f, 0x37);
+    let h1_color = Color32::from_rgb(0x1f, 0x23, 0x28);
+    let h2_color = Color32::from_rgb(0x1f, 0x23, 0x28);
+    let table_pipe_color = Color32::from_rgb(0xd0, 0xd7, 0xde);
+
+    let base_font = egui::FontId::proportional(15.0);
+    let code_font = egui::FontId::monospace(14.0);
+
+    let mut in_code_block = false;
+
+    for (line_idx, line) in s.split('\n').enumerate() {
+        if line_idx > 0 {
+            job.append("\n", 0.0, egui::TextFormat::simple(base_font.clone(), base_color));
+        }
+
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") {
+            in_code_block = !in_code_block;
+            job.append(
+                line,
+                0.0,
+                egui::TextFormat {
+                    font_id: code_font.clone(),
+                    color: marker_color,
+                    background: code_bg,
+                    ..Default::default()
+                },
+            );
+            continue;
+        }
+
+        if in_code_block {
+            job.append(
+                line,
+                0.0,
+                egui::TextFormat {
+                    font_id: code_font.clone(),
+                    color: base_color,
+                    background: code_bg,
+                    ..Default::default()
+                },
+            );
+            continue;
+        }
+
+        // 标题行渲染：保留标记字符（可编辑），标题文本放大加深
+        if line.starts_with("# ") {
+            job.append("# ", 0.0, egui::TextFormat::simple(egui::FontId::proportional(22.0), marker_color));
+            job.append(&line[2..], 0.0, egui::TextFormat::simple(egui::FontId::proportional(22.0), h1_color));
+        } else if line.starts_with("## ") {
+            job.append("## ", 0.0, egui::TextFormat::simple(egui::FontId::proportional(18.5), marker_color));
+            job.append(&line[3..], 0.0, egui::TextFormat::simple(egui::FontId::proportional(18.5), h2_color));
+        } else if line.starts_with("### ") {
+            job.append("### ", 0.0, egui::TextFormat::simple(egui::FontId::proportional(16.5), marker_color));
+            job.append(&line[4..], 0.0, egui::TextFormat::simple(egui::FontId::proportional(16.5), h2_color));
+        } else if line.starts_with("#### ") {
+            job.append("#### ", 0.0, egui::TextFormat::simple(egui::FontId::proportional(15.5), marker_color));
+            job.append(&line[5..], 0.0, egui::TextFormat::simple(egui::FontId::proportional(15.5), h2_color));
+        } else if line.starts_with("> ") {
+            job.append("> ", 0.0, egui::TextFormat::simple(base_font.clone(), link_color));
+            highlight_inline_spans(&mut job, &line[2..], &base_font, quote_color, marker_color, &code_font, code_color, code_bg, link_color);
+        } else if line.starts_with("- [ ] ") || line.starts_with("- [x] ") || line.starts_with("- [X] ") {
+            job.append(&line[..6], 0.0, egui::TextFormat::simple(base_font.clone(), list_marker_color));
+            highlight_inline_spans(&mut job, &line[6..], &base_font, base_color, marker_color, &code_font, code_color, code_bg, link_color);
+        } else if line.starts_with("- ") || line.starts_with("* ") {
+            job.append(&line[..2], 0.0, egui::TextFormat::simple(base_font.clone(), list_marker_color));
+            highlight_inline_spans(&mut job, &line[2..], &base_font, base_color, marker_color, &code_font, code_color, code_bg, link_color);
+        } else if line.starts_with("---") || line.starts_with("***") {
+            job.append(line, 0.0, egui::TextFormat::simple(base_font.clone(), marker_color));
+        } else if line.starts_with('|') {
+            // 表格行渲染：分隔符变灰，内容高亮
+            for (part_idx, part) in line.split('|').enumerate() {
+                if part_idx > 0 {
+                    job.append("|", 0.0, egui::TextFormat::simple(base_font.clone(), table_pipe_color));
+                }
+                highlight_inline_spans(&mut job, part, &base_font, base_color, marker_color, &code_font, code_color, code_bg, link_color);
+            }
+        } else {
+            highlight_inline_spans(&mut job, line, &base_font, base_color, marker_color, &code_font, code_color, code_bg, link_color);
+        }
+    }
+
+    ui.fonts_mut(|f| f.layout_job(job))
+}
+
+fn highlight_inline_spans(
+    job: &mut egui::text::LayoutJob,
+    text: &str,
+    base_font: &egui::FontId,
+    base_color: Color32,
+    marker_color: Color32,
+    code_font: &egui::FontId,
+    code_color: Color32,
+    code_bg: Color32,
+    link_color: Color32,
+) {
+    let mut rest = text;
+    while !rest.is_empty() {
+        if let Some(code_start) = rest.find('`') {
+            if let Some(code_end) = rest[code_start + 1..].find('`') {
+                let actual_end = code_start + 1 + code_end;
+                if code_start > 0 {
+                    highlight_bold_and_links(job, &rest[..code_start], base_font, base_color, marker_color, link_color);
+                }
+                job.append("`", 0.0, egui::TextFormat::simple(code_font.clone(), marker_color));
+                job.append(
+                    &rest[code_start + 1..actual_end],
+                    0.0,
+                    egui::TextFormat {
+                        font_id: code_font.clone(),
+                        color: code_color,
+                        background: code_bg,
+                        ..Default::default()
+                    },
+                );
+                job.append("`", 0.0, egui::TextFormat::simple(code_font.clone(), marker_color));
+                rest = &rest[actual_end + 1..];
+                continue;
+            }
+        }
+
+        highlight_bold_and_links(job, rest, base_font, base_color, marker_color, link_color);
+        break;
+    }
+}
+
+fn highlight_bold_and_links(
+    job: &mut egui::text::LayoutJob,
+    text: &str,
+    base_font: &egui::FontId,
+    base_color: Color32,
+    marker_color: Color32,
+    link_color: Color32,
+) {
+    let mut rest = text;
+    while !rest.is_empty() {
+        if let Some(b_start) = rest.find("**") {
+            if let Some(b_end) = rest[b_start + 2..].find("**") {
+                let actual_end = b_start + 2 + b_end;
+                if b_start > 0 {
+                    highlight_links(job, &rest[..b_start], base_font, base_color, marker_color, link_color);
+                }
+                job.append("**", 0.0, egui::TextFormat::simple(base_font.clone(), marker_color));
+                job.append(
+                    &rest[b_start + 2..actual_end],
+                    0.0,
+                    egui::TextFormat::simple(base_font.clone(), Color32::from_rgb(0x0f, 0x14, 0x19)),
+                );
+                job.append("**", 0.0, egui::TextFormat::simple(base_font.clone(), marker_color));
+                rest = &rest[actual_end + 2..];
+                continue;
+            }
+        }
+
+        highlight_links(job, rest, base_font, base_color, marker_color, link_color);
+        break;
+    }
+}
+
+fn highlight_links(
+    job: &mut egui::text::LayoutJob,
+    text: &str,
+    base_font: &egui::FontId,
+    base_color: Color32,
+    marker_color: Color32,
+    link_color: Color32,
+) {
+    let mut rest = text;
+    while !rest.is_empty() {
+        if let Some(l_start) = rest.find('[') {
+            if let Some(l_mid) = rest[l_start + 1..].find("](") {
+                let actual_mid = l_start + 1 + l_mid;
+                if let Some(l_end) = rest[actual_mid + 2..].find(')') {
+                    let actual_end = actual_mid + 2 + l_end;
+                    if l_start > 0 {
+                        job.append(&rest[..l_start], 0.0, egui::TextFormat::simple(base_font.clone(), base_color));
+                    }
+                    job.append("[", 0.0, egui::TextFormat::simple(base_font.clone(), marker_color));
+                    job.append(&rest[l_start + 1..actual_mid], 0.0, egui::TextFormat::simple(base_font.clone(), link_color));
+                    job.append("](", 0.0, egui::TextFormat::simple(base_font.clone(), marker_color));
+                    job.append(&rest[actual_mid + 2..actual_end], 0.0, egui::TextFormat::simple(base_font.clone(), marker_color));
+                    job.append(")", 0.0, egui::TextFormat::simple(base_font.clone(), marker_color));
+                    rest = &rest[actual_end + 1..];
+                    continue;
+                }
+            }
+        }
+        job.append(rest, 0.0, egui::TextFormat::simple(base_font.clone(), base_color));
+        break;
     }
 }

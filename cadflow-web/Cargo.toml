@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 cadcraft-engine = { path = "../cadcraft/crates/engine" }
+cadcraft-geom = { path = "../cadcraft/crates/geom" }
 cadcraft-ui-egui = { path = "../cadcraft/crates/ui-egui" }
 cadcraft-io = { path = "../cadcraft/crates/io" }
 cadcraft-doc = { path = "../cadcraft/crates/doc" }
