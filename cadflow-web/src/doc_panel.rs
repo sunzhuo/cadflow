@@ -1,15 +1,14 @@
 //! Markdown document panel and editor for CADFlow.
 //!
-//! Refactored to reference the "Tool Sets" panel style:
-//! - Top header: "文档" title and [编辑] [预览] sub-tabs styled matching Tool Sets
-//!   (chrome and tab_active background, no blue underline/fill)
-//! - No extra buttons in the panel (all buttons in toolbar)
-//! - Only document content area uses pure white background (#ffffff)
-//! - Typography and font styling reference StackEdit
-//! - Markdown preview parsed & rendered natively using egui_commonmark
+//! Refactored to mount native HTML <div> overlay powered by EasyMDE:
+//! - Top header: "文档" title and [编辑] [分栏] [预览] sub-tabs styled matching Tool Sets
+//! - Content area: mounts native HTML <div> overlay with EasyMDE for native Chinese IME, typography & performance
+//! - Bottom footer: "清空内容" quick action button and live character counter
+//! - Sub-pixel synchronized sliding animation: overlay rectangle coordinates sync every frame with the panel
 
-use egui::{pos2, vec2, Color32, Rect, Sense, Stroke, Ui};
+use egui::{pos2, vec2, Color32, Rect, Sense, Ui};
 use serde::{Deserialize, Serialize};
+use wasm_bindgen::JsCast;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum DocSubTab {
@@ -35,16 +34,6 @@ pub enum DocAction {
     Table,
     Link,
     Image,
-}
-
-#[derive(Default)]
-pub struct DocState {
-    pub title: String,
-    pub content: String,
-    pub sub_tab: DocSubTab,
-    pub undo_stack: Vec<String>,
-    pub redo_stack: Vec<String>,
-    pub cache: egui_commonmark::CommonMarkCache,
 }
 
 pub const DEFAULT_DOC_TEMPLATE: &str = r#"# 数字化工程设计与技术说明书 (CADFlow Design Notes)
@@ -91,11 +80,26 @@ pub const DEFAULT_DOC_TEMPLATE: &str = r#"# 数字化工程设计与技术说明
 
 ## 4. 技术备忘与注意事项
 > 📌 **重要提示**：
-> 1. 本面板支持全功能 **Markdown** 语法编辑与实时渲染；
-> 2. 点击上方子标签可切换【编辑】与【预览】；
-> 3. 工具栏右侧提供完整的 Markdown 编辑工具组；
-> 4. 点击【文档】按钮可平滑展开与折叠文档面板。
+> 1. 本面板支持全功能 **Markdown** 原生 DOM 编辑与实时渲染；
+> 2. 点击上方子标签可切换【编辑】、【分栏】与【预览】；
+> 3. 顶部工具栏与面板内部均提供 Markdown 快捷操作工具组；
+> 4. 点击【文档】按钮可平滑展开与折叠文档侧边栏。
 "#;
+
+pub struct DocState {
+    pub title: String,
+    pub content: String,
+    pub sub_tab: DocSubTab,
+    pub undo_stack: Vec<String>,
+    pub redo_stack: Vec<String>,
+    overlay_mounted: bool,
+}
+
+impl Default for DocState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl DocState {
     pub fn new() -> Self {
@@ -105,50 +109,186 @@ impl DocState {
             sub_tab: DocSubTab::Edit,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
-            cache: egui_commonmark::CommonMarkCache::default(),
+            overlay_mounted: false,
         }
     }
 
-    /// 执行来自顶部工具栏的 Markdown 编辑操作
+    /// 执行来自顶部工具栏的 Markdown 编辑操作 (通过 EasyMDE 实例 API 实现)
     pub fn apply_action(&mut self, action: DocAction) {
-        match action {
-            DocAction::Undo => {
-                if let Some(prev) = self.undo_stack.pop() {
-                    self.redo_stack.push(self.content.clone());
-                    self.content = prev;
+        let js = match action {
+            DocAction::Undo => "if (window.__cadflow_easymde) { window.__cadflow_easymde.codemirror.undo(); }",
+            DocAction::Redo => "if (window.__cadflow_easymde) { window.__cadflow_easymde.codemirror.redo(); }",
+            DocAction::Bold => "if (window.__cadflow_easymde) { EasyMDE.toggleBold(window.__cadflow_easymde); }",
+            DocAction::Italic => "if (window.__cadflow_easymde) { EasyMDE.toggleItalic(window.__cadflow_easymde); }",
+            DocAction::Heading => "if (window.__cadflow_easymde) { EasyMDE.toggleHeadingSmaller(window.__cadflow_easymde); }",
+            DocAction::Strikethrough => "if (window.__cadflow_easymde) { EasyMDE.toggleStrikethrough(window.__cadflow_easymde); }",
+            DocAction::UnorderedList => "if (window.__cadflow_easymde) { EasyMDE.toggleUnorderedList(window.__cadflow_easymde); }",
+            DocAction::OrderedList => "if (window.__cadflow_easymde) { EasyMDE.toggleOrderedList(window.__cadflow_easymde); }",
+            DocAction::CheckList => "if (window.__cadflow_easymde) { EasyMDE.toggleCheckList(window.__cadflow_easymde); }",
+            DocAction::Quote => "if (window.__cadflow_easymde) { EasyMDE.toggleBlockquote(window.__cadflow_easymde); }",
+            DocAction::Code => "if (window.__cadflow_easymde) { EasyMDE.toggleCodeBlock(window.__cadflow_easymde); }",
+            DocAction::Table => "if (window.__cadflow_easymde) { EasyMDE.drawTable(window.__cadflow_easymde); }",
+            DocAction::Link => "if (window.__cadflow_easymde) { EasyMDE.drawLink(window.__cadflow_easymde); }",
+            DocAction::Image => "if (window.__cadflow_easymde) { EasyMDE.drawImage(window.__cadflow_easymde); }",
+        };
+        let _ = js_sys::eval(js);
+    }
+
+    /// 切换子标签模式并同步 EasyMDE 的视图 (编辑 / 分栏 / 预览)
+    pub fn set_subtab(&mut self, target: DocSubTab) {
+        self.sub_tab = target;
+        let script = match target {
+            DocSubTab::Edit => {
+                r#"
+                if (window.__cadflow_easymde) {
+                    const mde = window.__cadflow_easymde;
+                    if (mde.isPreviewActive()) { EasyMDE.togglePreview(mde); }
+                    if (mde.isSideBySideActive()) { EasyMDE.toggleSideBySide(mde); }
+                    const toolbar = document.querySelector('#doc-easymde-overlay .editor-toolbar');
+                    if (toolbar) { toolbar.style.display = 'block'; }
+                    mde.codemirror.refresh();
+                }
+                "#
+            }
+            DocSubTab::Split => {
+                r#"
+                if (window.__cadflow_easymde) {
+                    const mde = window.__cadflow_easymde;
+                    if (mde.isPreviewActive()) { EasyMDE.togglePreview(mde); }
+                    if (!mde.isSideBySideActive()) { EasyMDE.toggleSideBySide(mde); }
+                    const toolbar = document.querySelector('#doc-easymde-overlay .editor-toolbar');
+                    if (toolbar) { toolbar.style.display = 'block'; }
+                    mde.codemirror.refresh();
+                }
+                "#
+            }
+            DocSubTab::Preview => {
+                r#"
+                if (window.__cadflow_easymde) {
+                    const mde = window.__cadflow_easymde;
+                    if (mde.isSideBySideActive()) { EasyMDE.toggleSideBySide(mde); }
+                    if (!mde.isPreviewActive()) { EasyMDE.togglePreview(mde); }
+                    const toolbar = document.querySelector('#doc-easymde-overlay .editor-toolbar');
+                    if (toolbar) { toolbar.style.display = 'none'; }
+                }
+                "#
+            }
+        };
+        let _ = js_sys::eval(script);
+    }
+
+    /// 清空 EasyMDE 文本内容
+    pub fn clear_easymde_content(&self) {
+        let _ = js_sys::eval(
+            r#"
+            if (window.__cadflow_easymde) {
+                window.__cadflow_easymde.value("");
+                if (window.__cadflow_easymde.isPreviewActive()) {
+                    EasyMDE.togglePreview(window.__cadflow_easymde);
+                    EasyMDE.togglePreview(window.__cadflow_easymde);
                 }
             }
-            DocAction::Redo => {
-                if let Some(next) = self.redo_stack.pop() {
-                    self.undo_stack.push(self.content.clone());
-                    self.content = next;
-                }
+            "#,
+        );
+    }
+
+    /// 获取当前 EasyMDE 中的字符数量（用于底部状态栏展示）
+    pub fn get_char_count(&self) -> usize {
+        js_sys::eval("window.__cadflow_easymde ? Array.from(window.__cadflow_easymde.value()).length : 0")
+            .ok()
+            .and_then(|v| v.as_f64())
+            .map(|n| n as usize)
+            .unwrap_or(0)
+    }
+
+    /// 获取 EasyMDE 当前文本
+    pub fn get_content(&self) -> String {
+        js_sys::eval("window.__cadflow_easymde ? window.__cadflow_easymde.value() : ''")
+            .ok()
+            .and_then(|v| v.as_string())
+            .unwrap_or_else(|| self.content.clone())
+    }
+
+    /// 通过 web-sys 在 body 下挂载原生 <div> 浮层并初始化 EasyMDE
+    pub fn ensure_overlay_mounted(&mut self) {
+        if self.overlay_mounted {
+            return;
+        }
+        let Some(window) = web_sys::window() else { return };
+        let Some(document) = window.document() else { return };
+        let Some(body) = document.body() else { return };
+
+        if document.get_element_by_id("doc-easymde-overlay").is_none() {
+            // 1. 创建原生 <div> 浮层容器
+            let Ok(overlay_div) = document.create_element("div") else { return };
+            let Ok(overlay_div) = overlay_div.dyn_into::<web_sys::HtmlElement>() else { return };
+            overlay_div.set_id("doc-easymde-overlay");
+
+            // 2. 创建供 EasyMDE 绑定的 <textarea>
+            let Ok(textarea) = document.create_element("textarea") else { return };
+            let Ok(textarea) = textarea.dyn_into::<web_sys::HtmlTextAreaElement>() else { return };
+            textarea.set_id("doc-easymde-textarea");
+            textarea.set_value(DEFAULT_DOC_TEMPLATE);
+
+            if overlay_div.append_child(&textarea).is_err() {
+                return;
             }
-            DocAction::Bold => self.record_and_insert("**粗体文字**"),
-            DocAction::Italic => self.record_and_insert("*斜体文字*"),
-            DocAction::Heading => self.record_and_insert("\n## 标题\n"),
-            DocAction::Strikethrough => self.record_and_insert("~~删除线文字~~"),
-            DocAction::UnorderedList => self.record_and_insert("\n- 列表项\n"),
-            DocAction::OrderedList => self.record_and_insert("\n1. 序号项\n"),
-            DocAction::CheckList => self.record_and_insert("\n- [ ] 待办项\n"),
-            DocAction::Quote => self.record_and_insert("\n> 引用内容\n"),
-            DocAction::Code => self.record_and_insert("\n```rust\n// 代码块\n```\n"),
-            DocAction::Table => self.record_and_insert("\n| 标题1 | 标题2 |\n| :--- | :--- |\n| 单元格1 | 单元格2 |\n"),
-            DocAction::Link => self.record_and_insert("[链接说明](https://example.com)"),
-            DocAction::Image => self.record_and_insert("![图片描述](https://example.com/image.png)"),
+            if body.append_child(&overlay_div).is_err() {
+                return;
+            }
+
+            // 3. 调用全局 EasyMDE 初始化实例
+            let init_js = r#"
+                (function() {
+                    const el = document.getElementById('doc-easymde-textarea');
+                    if (el && window.EasyMDE && !window.__cadflow_easymde) {
+                        window.__cadflow_easymde = new EasyMDE({
+                            element: el,
+                            spellChecker: false,
+                            status: false,
+                            autoDownloadFontAwesome: true,
+                            minHeight: "100%",
+                            toolbar: ["bold", "italic", "heading", "|", "quote", "unordered-list", "ordered-list", "|", "code", "table"]
+                        });
+                    }
+                })();
+            "#;
+            let _ = js_sys::eval(init_js);
+        }
+
+        self.overlay_mounted = true;
+    }
+
+    /// 通过 web-sys 实时同步原生 <div> 浮层的矩形区域位置、尺寸与显隐状态
+    pub fn sync_overlay_rect(&mut self, rect: Option<Rect>) {
+        self.ensure_overlay_mounted();
+
+        let Some(window) = web_sys::window() else { return };
+        let Some(document) = window.document() else { return };
+        let Some(el) = document.get_element_by_id("doc-easymde-overlay") else { return };
+        let Ok(html_el) = el.dyn_into::<web_sys::HtmlElement>() else { return };
+        let style = html_el.style();
+
+        match rect {
+            Some(r) if r.width() > 1.0 && r.height() > 1.0 => {
+                let _ = style.set_property("display", "block");
+                let _ = style.set_property("left", &format!("{:.2}px", r.min.x));
+                let _ = style.set_property("top", &format!("{:.2}px", r.min.y));
+                let _ = style.set_property("width", &format!("{:.2}px", r.width()));
+                let _ = style.set_property("height", &format!("{:.2}px", r.height()));
+
+                // 动画滑动或尺寸调整时刷新 CodeMirror 布局
+                let _ = js_sys::eval(
+                    "if (window.__cadflow_easymde) { window.__cadflow_easymde.codemirror.refresh(); }",
+                );
+            }
+            _ => {
+                let _ = style.set_property("display", "none");
+            }
         }
     }
 
-    fn record_and_insert(&mut self, snippet: &str) {
-        self.undo_stack.push(self.content.clone());
-        self.redo_stack.clear();
-        self.content.push_str(snippet);
-    }
-
-    /// 渲染重构后的文档面板 (Req 9 & Req 11)
-    /// - 头部样式参考工具集 (Tool Sets) 面板：标签与子标签样式 (背景色与选中色与工具集一致)
-    /// - 仅文档内容部分底色使用纯白色
-    /// - Markdown 字符串自动解析渲染为原生 egui 元素 (egui_commonmark)
+    /// 渲染文档侧边栏面板界面 (Req 9 & Req 11)
     pub fn ui(&mut self, ui: &mut Ui) {
         let t = cadcraft_ui_egui::theme::Tokens::get();
         let p = ui.painter().clone();
@@ -174,8 +314,7 @@ impl DocState {
         );
 
         // --------------------------------------------------------------------
-        // 2. 第二行：“编辑”与“预览”子标签栏 (位于“文档”主标签下方，高度 26px，Req 7)
-        //    主标签与子标签之间没有横线 (Req 1)
+        // 2. 第二行：“编辑”、“分栏”与“预览”子标签栏 (高度 26px，Req 7)
         // --------------------------------------------------------------------
         let sub_h = 26.0;
         let (sub_bar_rect, _) = ui.allocate_exact_size(vec2(full_w, sub_h), Sense::hover());
@@ -211,308 +350,46 @@ impl DocState {
         }
 
         if let Some(st) = clicked_sub {
-            self.sub_tab = st;
+            self.set_subtab(st);
         }
 
-        // 子标签和下面的面板内容之间没有横线 (Req 1)
-
         // --------------------------------------------------------------------
-        // 3. 文档内容区域（纯白色背景，支持即时 Markdown 语法高亮预览与分栏实时渲染，Req: 参考 StackEdit）
+        // 3. 底部状态与快捷操作栏（清空内容 + 实时字符数统计）
         // --------------------------------------------------------------------
-        let content_rect = Rect::from_min_max(pos2(sub_bar_rect.left(), sub_bar_rect.bottom()), ui.max_rect().max);
-        ui.painter().rect_filled(content_rect, 0.0, Color32::WHITE);
+        let footer_h = 28.0;
+        let footer_rect = Rect::from_min_size(
+            pos2(main_bar_rect.left(), ui.max_rect().bottom() - footer_h),
+            vec2(full_w, footer_h),
+        );
+        p.rect_filled(footer_rect, 0.0, t.chrome);
 
         ui.scope_builder(
-            egui::UiBuilder::new().max_rect(content_rect.shrink2(vec2(16.0, 14.0))),
+            egui::UiBuilder::new().max_rect(footer_rect.shrink2(vec2(10.0, 4.0))),
             |ui| {
-                // 在白色背景下设置优雅易读的深色文字排版风格并提升字号 (Req 8)
-                let text_color = Color32::from_rgb(0x24, 0x29, 0x2f);
-                ui.visuals_mut().override_text_color = Some(text_color);
-                ui.visuals_mut().widgets.noninteractive.fg_stroke = Stroke::new(1.0, text_color);
-                ui.visuals_mut().widgets.inactive.fg_stroke = Stroke::new(1.0, text_color);
-
-                let mut style = (**ui.style()).clone();
-                style.text_styles.insert(egui::TextStyle::Body, egui::FontId::proportional(15.0));
-                style.text_styles.insert(egui::TextStyle::Heading, egui::FontId::proportional(20.0));
-                style.text_styles.insert(egui::TextStyle::Monospace, egui::FontId::monospace(14.0));
-                ui.set_style(style);
-
-                match self.sub_tab {
-                    DocSubTab::Edit => {
-                        egui::ScrollArea::vertical()
-                            .id_salt("cadflow_doc_edit_scroll")
-                            .auto_shrink([false, false])
-                            .show(ui, |ui| {
-                                ui.add(
-                                    egui::TextEdit::multiline(&mut self.content)
-                                        .desired_width(f32::INFINITY)
-                                        .frame(egui::Frame::NONE)
-                                        .layouter(&mut |ui, text, wrap_width| {
-                                            markdown_layouter(ui, text, wrap_width)
-                                        }),
-                                );
-                            });
+                ui.horizontal_centered(|ui| {
+                    if ui.small_button("清空内容").clicked() {
+                        self.clear_easymde_content();
                     }
-                    DocSubTab::Split => {
-                        let avail_w = ui.available_width();
-                        let half_w = ((avail_w - 12.0) * 0.5).max(100.0);
-                        ui.horizontal(|ui| {
-                            // 左半侧：Markdown 实时格式高亮编辑器
-                            ui.allocate_ui_with_layout(
-                                vec2(half_w, ui.available_height()),
-                                egui::Layout::top_down(egui::Align::Min),
-                                |ui| {
-                                    egui::ScrollArea::vertical()
-                                        .id_salt("cadflow_doc_split_edit_scroll")
-                                        .auto_shrink([false, false])
-                                        .show(ui, |ui| {
-                                            ui.add(
-                                                egui::TextEdit::multiline(&mut self.content)
-                                                    .desired_width(f32::INFINITY)
-                                                    .frame(egui::Frame::NONE)
-                                                    .layouter(&mut |ui, text, wrap_width| {
-                                                        markdown_layouter(ui, text, wrap_width)
-                                                    }),
-                                            );
-                                        });
-                                },
-                            );
-
-                            // 分隔坚线
-                            let (div_rect, _) = ui.allocate_exact_size(vec2(2.0, ui.available_height()), Sense::hover());
-                            ui.painter().vline(div_rect.center().x, div_rect.y_range(), Stroke::new(1.0, Color32::from_rgb(0xe1, 0xe4, 0xe8)));
-
-                            // 右半侧：全隐藏标记的纯净 Markdown 原生预览
-                            ui.allocate_ui_with_layout(
-                                vec2(ui.available_width(), ui.available_height()),
-                                egui::Layout::top_down(egui::Align::Min),
-                                |ui| {
-                                    egui::ScrollArea::vertical()
-                                        .id_salt("cadflow_doc_split_preview_scroll")
-                                        .auto_shrink([false, false])
-                                        .show(ui, |ui| {
-                                            ui.spacing_mut().item_spacing = vec2(0.0, 10.0);
-                                            egui_commonmark::CommonMarkViewer::new().show(ui, &mut self.cache, &self.content);
-                                        });
-                                },
-                            );
-                        });
-                    }
-                    DocSubTab::Preview => {
-                        egui::ScrollArea::vertical()
-                            .id_salt("cadflow_doc_preview_scroll")
-                            .auto_shrink([false, false])
-                            .show(ui, |ui| {
-                                ui.spacing_mut().item_spacing = vec2(0.0, 10.0);
-                                egui_commonmark::CommonMarkViewer::new().show(ui, &mut self.cache, &self.content);
-                            });
-                    }
-                }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(
+                            egui::RichText::new(format!("{} 字符", self.get_char_count()))
+                                .size(11.0)
+                                .color(Color32::GRAY),
+                        );
+                    });
+                });
             },
         );
-    }
-}
 
-/// 仿 StackEdit 风格的 Markdown 编辑器语法即时高亮与格式预览 layouter
-pub fn markdown_layouter(ui: &Ui, text: &dyn egui::text_edit::TextBuffer, wrap_width: f32) -> std::sync::Arc<egui::Galley> {
-    let s = text.as_str();
-    let mut job = egui::text::LayoutJob::default();
-    job.wrap.max_width = wrap_width;
+        // --------------------------------------------------------------------
+        // 4. 文档中央可编辑矩形区域：在 egui 画布中仅占位，上方挂载原生 EasyMDE 浮层
+        // --------------------------------------------------------------------
+        let content_rect = Rect::from_min_max(
+            pos2(sub_bar_rect.left(), sub_bar_rect.bottom()),
+            pos2(ui.max_rect().right(), footer_rect.top()),
+        );
+        ui.allocate_rect(content_rect, Sense::hover());
 
-    let base_color = Color32::from_rgb(0x24, 0x29, 0x2f);
-    let marker_color = Color32::from_rgb(0x8c, 0x95, 0x9f);
-    let quote_color = Color32::from_rgb(0x57, 0x60, 0x6a);
-    let code_color = Color32::from_rgb(0xc7, 0x25, 0x4e);
-    let code_bg = Color32::from_rgb(0xf6, 0xf8, 0xfa);
-    let link_color = Color32::from_rgb(0x09, 0x69, 0xda);
-    let list_marker_color = Color32::from_rgb(0x1a, 0x7f, 0x37);
-    let h1_color = Color32::from_rgb(0x1f, 0x23, 0x28);
-    let h2_color = Color32::from_rgb(0x1f, 0x23, 0x28);
-    let table_pipe_color = Color32::from_rgb(0xd0, 0xd7, 0xde);
-
-    let base_font = egui::FontId::proportional(15.0);
-    let code_font = egui::FontId::monospace(14.0);
-
-    let mut in_code_block = false;
-
-    for (line_idx, line) in s.split('\n').enumerate() {
-        if line_idx > 0 {
-            job.append("\n", 0.0, egui::TextFormat::simple(base_font.clone(), base_color));
-        }
-
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("```") {
-            in_code_block = !in_code_block;
-            job.append(
-                line,
-                0.0,
-                egui::TextFormat {
-                    font_id: code_font.clone(),
-                    color: marker_color,
-                    background: code_bg,
-                    ..Default::default()
-                },
-            );
-            continue;
-        }
-
-        if in_code_block {
-            job.append(
-                line,
-                0.0,
-                egui::TextFormat {
-                    font_id: code_font.clone(),
-                    color: base_color,
-                    background: code_bg,
-                    ..Default::default()
-                },
-            );
-            continue;
-        }
-
-        // 标题行渲染：保留标记字符（可编辑），标题文本放大加深
-        if line.starts_with("# ") {
-            job.append("# ", 0.0, egui::TextFormat::simple(egui::FontId::proportional(22.0), marker_color));
-            job.append(&line[2..], 0.0, egui::TextFormat::simple(egui::FontId::proportional(22.0), h1_color));
-        } else if line.starts_with("## ") {
-            job.append("## ", 0.0, egui::TextFormat::simple(egui::FontId::proportional(18.5), marker_color));
-            job.append(&line[3..], 0.0, egui::TextFormat::simple(egui::FontId::proportional(18.5), h2_color));
-        } else if line.starts_with("### ") {
-            job.append("### ", 0.0, egui::TextFormat::simple(egui::FontId::proportional(16.5), marker_color));
-            job.append(&line[4..], 0.0, egui::TextFormat::simple(egui::FontId::proportional(16.5), h2_color));
-        } else if line.starts_with("#### ") {
-            job.append("#### ", 0.0, egui::TextFormat::simple(egui::FontId::proportional(15.5), marker_color));
-            job.append(&line[5..], 0.0, egui::TextFormat::simple(egui::FontId::proportional(15.5), h2_color));
-        } else if line.starts_with("> ") {
-            job.append("> ", 0.0, egui::TextFormat::simple(base_font.clone(), link_color));
-            highlight_inline_spans(&mut job, &line[2..], &base_font, quote_color, marker_color, &code_font, code_color, code_bg, link_color);
-        } else if line.starts_with("- [ ] ") || line.starts_with("- [x] ") || line.starts_with("- [X] ") {
-            job.append(&line[..6], 0.0, egui::TextFormat::simple(base_font.clone(), list_marker_color));
-            highlight_inline_spans(&mut job, &line[6..], &base_font, base_color, marker_color, &code_font, code_color, code_bg, link_color);
-        } else if line.starts_with("- ") || line.starts_with("* ") {
-            job.append(&line[..2], 0.0, egui::TextFormat::simple(base_font.clone(), list_marker_color));
-            highlight_inline_spans(&mut job, &line[2..], &base_font, base_color, marker_color, &code_font, code_color, code_bg, link_color);
-        } else if line.starts_with("---") || line.starts_with("***") {
-            job.append(line, 0.0, egui::TextFormat::simple(base_font.clone(), marker_color));
-        } else if line.starts_with('|') {
-            // 表格行渲染：分隔符变灰，内容高亮
-            for (part_idx, part) in line.split('|').enumerate() {
-                if part_idx > 0 {
-                    job.append("|", 0.0, egui::TextFormat::simple(base_font.clone(), table_pipe_color));
-                }
-                highlight_inline_spans(&mut job, part, &base_font, base_color, marker_color, &code_font, code_color, code_bg, link_color);
-            }
-        } else {
-            highlight_inline_spans(&mut job, line, &base_font, base_color, marker_color, &code_font, code_color, code_bg, link_color);
-        }
-    }
-
-    ui.fonts_mut(|f| f.layout_job(job))
-}
-
-fn highlight_inline_spans(
-    job: &mut egui::text::LayoutJob,
-    text: &str,
-    base_font: &egui::FontId,
-    base_color: Color32,
-    marker_color: Color32,
-    code_font: &egui::FontId,
-    code_color: Color32,
-    code_bg: Color32,
-    link_color: Color32,
-) {
-    let mut rest = text;
-    while !rest.is_empty() {
-        if let Some(code_start) = rest.find('`') {
-            if let Some(code_end) = rest[code_start + 1..].find('`') {
-                let actual_end = code_start + 1 + code_end;
-                if code_start > 0 {
-                    highlight_bold_and_links(job, &rest[..code_start], base_font, base_color, marker_color, link_color);
-                }
-                job.append("`", 0.0, egui::TextFormat::simple(code_font.clone(), marker_color));
-                job.append(
-                    &rest[code_start + 1..actual_end],
-                    0.0,
-                    egui::TextFormat {
-                        font_id: code_font.clone(),
-                        color: code_color,
-                        background: code_bg,
-                        ..Default::default()
-                    },
-                );
-                job.append("`", 0.0, egui::TextFormat::simple(code_font.clone(), marker_color));
-                rest = &rest[actual_end + 1..];
-                continue;
-            }
-        }
-
-        highlight_bold_and_links(job, rest, base_font, base_color, marker_color, link_color);
-        break;
-    }
-}
-
-fn highlight_bold_and_links(
-    job: &mut egui::text::LayoutJob,
-    text: &str,
-    base_font: &egui::FontId,
-    base_color: Color32,
-    marker_color: Color32,
-    link_color: Color32,
-) {
-    let mut rest = text;
-    while !rest.is_empty() {
-        if let Some(b_start) = rest.find("**") {
-            if let Some(b_end) = rest[b_start + 2..].find("**") {
-                let actual_end = b_start + 2 + b_end;
-                if b_start > 0 {
-                    highlight_links(job, &rest[..b_start], base_font, base_color, marker_color, link_color);
-                }
-                job.append("**", 0.0, egui::TextFormat::simple(base_font.clone(), marker_color));
-                job.append(
-                    &rest[b_start + 2..actual_end],
-                    0.0,
-                    egui::TextFormat::simple(base_font.clone(), Color32::from_rgb(0x0f, 0x14, 0x19)),
-                );
-                job.append("**", 0.0, egui::TextFormat::simple(base_font.clone(), marker_color));
-                rest = &rest[actual_end + 2..];
-                continue;
-            }
-        }
-
-        highlight_links(job, rest, base_font, base_color, marker_color, link_color);
-        break;
-    }
-}
-
-fn highlight_links(
-    job: &mut egui::text::LayoutJob,
-    text: &str,
-    base_font: &egui::FontId,
-    base_color: Color32,
-    marker_color: Color32,
-    link_color: Color32,
-) {
-    let mut rest = text;
-    while !rest.is_empty() {
-        if let Some(l_start) = rest.find('[') {
-            if let Some(l_mid) = rest[l_start + 1..].find("](") {
-                let actual_mid = l_start + 1 + l_mid;
-                if let Some(l_end) = rest[actual_mid + 2..].find(')') {
-                    let actual_end = actual_mid + 2 + l_end;
-                    if l_start > 0 {
-                        job.append(&rest[..l_start], 0.0, egui::TextFormat::simple(base_font.clone(), base_color));
-                    }
-                    job.append("[", 0.0, egui::TextFormat::simple(base_font.clone(), marker_color));
-                    job.append(&rest[l_start + 1..actual_mid], 0.0, egui::TextFormat::simple(base_font.clone(), link_color));
-                    job.append("](", 0.0, egui::TextFormat::simple(base_font.clone(), marker_color));
-                    job.append(&rest[actual_mid + 2..actual_end], 0.0, egui::TextFormat::simple(base_font.clone(), marker_color));
-                    job.append(")", 0.0, egui::TextFormat::simple(base_font.clone(), marker_color));
-                    rest = &rest[actual_end + 1..];
-                    continue;
-                }
-            }
-        }
-        job.append(rest, 0.0, egui::TextFormat::simple(base_font.clone(), base_color));
-        break;
+        self.sync_overlay_rect(Some(content_rect));
     }
 }
