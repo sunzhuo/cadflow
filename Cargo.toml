@@ -9,7 +9,7 @@ hayro-syntax = { git = "https://github.com/storytold/craft-libs", rev = "6e7f285
 hayro-jbig2 = { git = "https://github.com/storytold/craft-libs", rev = "6e7f28518dd1cb57e1624bdc269c3c14316b13ae" }
 
 [profile.release]
-opt-level = "s"
+opt-level = "z"
 lto = true
 codegen-units = 1
 panic = "abort"

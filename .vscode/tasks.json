@@ -1,0 +1,29 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "⚡ 快速预览 (Trunk Serve)",
+      "type": "shell",
+      "command": "trunk serve --open",
+      "options": {
+        "cwd": "${workspaceFolder}/cadflow-web"
+      },
+      "isBackground": true,
+      "problemMatcher": [],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    },
+    {
+      "label": "🚀 优化编译 (Trunk Release)",
+      "type": "shell",
+      "command": "trunk build --release",
+      "options": {
+        "cwd": "${workspaceFolder}/cadflow-web"
+      },
+      "problemMatcher": ["$rustc"],
+      "group": "build"
+    }
+  ]
+}
