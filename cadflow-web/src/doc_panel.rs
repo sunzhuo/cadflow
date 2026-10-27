@@ -1,7 +1,7 @@
 //! Markdown document panel and editor for CADFlow.
 //!
 //! Refactored to mount native HTML <div> overlay powered by EasyMDE:
-//! - Top header: "文档" title and [编辑] [分栏] [预览] sub-tabs styled matching Tool Sets
+//! - Top header: "文档" title and [编辑] [预览] sub-tabs styled matching Tool Sets
 //! - Content area: mounts native HTML <div> overlay with EasyMDE for native Chinese IME, typography & performance
 //! - Bottom footer: "清空内容" quick action button and live character counter
 //! - Sub-pixel synchronized sliding animation: overlay rectangle coordinates sync every frame with the panel
@@ -14,7 +14,6 @@ use wasm_bindgen::JsCast;
 pub enum DocSubTab {
     #[default]
     Edit,
-    Split,
     Preview,
 }
 
@@ -81,8 +80,8 @@ pub const DEFAULT_DOC_TEMPLATE: &str = r#"# 数字化工程设计与技术说明
 ## 4. 技术备忘与注意事项
 > 📌 **重要提示**：
 > 1. 本面板支持全功能 **Markdown** 原生 DOM 编辑与实时渲染；
-> 2. 点击上方子标签可切换【编辑】、【分栏】与【预览】；
-> 3. 顶部工具栏与面板内部均提供 Markdown 快捷操作工具组；
+> 2. 点击上方子标签可切换【编辑】与【预览】；
+> 3. 顶部主工具栏提供 Markdown 快捷操作工具组；
 > 4. 点击【文档】按钮可平滑展开与折叠文档侧边栏。
 "#;
 
@@ -134,7 +133,7 @@ impl DocState {
         let _ = js_sys::eval(js);
     }
 
-    /// 切换子标签模式并同步 EasyMDE 的视图 (编辑 / 分栏 / 预览)
+    /// 切换子标签模式并同步 EasyMDE 的视图 (编辑 / 预览)
     pub fn set_subtab(&mut self, target: DocSubTab) {
         self.sub_tab = target;
         let script = match target {
@@ -144,20 +143,6 @@ impl DocState {
                     const mde = window.__cadflow_easymde;
                     if (mde.isPreviewActive()) { EasyMDE.togglePreview(mde); }
                     if (mde.isSideBySideActive()) { EasyMDE.toggleSideBySide(mde); }
-                    const toolbar = document.querySelector('#doc-easymde-overlay .editor-toolbar');
-                    if (toolbar) { toolbar.style.display = 'block'; }
-                    mde.codemirror.refresh();
-                }
-                "#
-            }
-            DocSubTab::Split => {
-                r#"
-                if (window.__cadflow_easymde) {
-                    const mde = window.__cadflow_easymde;
-                    if (mde.isPreviewActive()) { EasyMDE.togglePreview(mde); }
-                    if (!mde.isSideBySideActive()) { EasyMDE.toggleSideBySide(mde); }
-                    const toolbar = document.querySelector('#doc-easymde-overlay .editor-toolbar');
-                    if (toolbar) { toolbar.style.display = 'block'; }
                     mde.codemirror.refresh();
                 }
                 "#
@@ -168,8 +153,6 @@ impl DocState {
                     const mde = window.__cadflow_easymde;
                     if (mde.isSideBySideActive()) { EasyMDE.toggleSideBySide(mde); }
                     if (!mde.isPreviewActive()) { EasyMDE.togglePreview(mde); }
-                    const toolbar = document.querySelector('#doc-easymde-overlay .editor-toolbar');
-                    if (toolbar) { toolbar.style.display = 'none'; }
                 }
                 "#
             }
@@ -237,7 +220,7 @@ impl DocState {
                 return;
             }
 
-            // 3. 调用全局 EasyMDE 初始化实例
+            // 3. 调用全局 EasyMDE 初始化实例（彻底关闭内部工具栏，使用顶部主工具栏，Req 4）
             let init_js = r#"
                 (function() {
                     const el = document.getElementById('doc-easymde-textarea');
@@ -246,9 +229,9 @@ impl DocState {
                             element: el,
                             spellChecker: false,
                             status: false,
-                            autoDownloadFontAwesome: true,
+                            autoDownloadFontAwesome: false,
                             minHeight: "100%",
-                            toolbar: ["bold", "italic", "heading", "|", "quote", "unordered-list", "ordered-list", "|", "code", "table"]
+                            toolbar: false
                         });
                     }
                 })();
@@ -288,10 +271,13 @@ impl DocState {
         }
     }
 
-    /// 渲染文档侧边栏面板界面 (Req 9 & Req 11)
+    /// 渲染文档侧边栏面板界面 (Req 2, Req 3)
     pub fn ui(&mut self, ui: &mut Ui) {
         let t = cadcraft_ui_egui::theme::Tokens::get();
         let p = ui.painter().clone();
+
+        // 消除标签行与内容行之间的默认垂直间距，确保主标签与次标签无缝贴合 (Req 2)
+        ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
 
         // --------------------------------------------------------------------
         // 1. 第一行：“文档”主标签栏 (高度 28px，严格参考 CADCraft 工具集主标签样式，Req 7, 9)
@@ -314,7 +300,7 @@ impl DocState {
         );
 
         // --------------------------------------------------------------------
-        // 2. 第二行：“编辑”、“分栏”与“预览”子标签栏 (高度 26px，Req 7)
+        // 2. 第二行：“编辑”与“预览”次标签栏 (高度 26px，无缝紧贴主标签，0 空隙，Req 2, Req 3)
         // --------------------------------------------------------------------
         let sub_h = 26.0;
         let (sub_bar_rect, _) = ui.allocate_exact_size(vec2(full_w, sub_h), Sense::hover());
@@ -322,7 +308,6 @@ impl DocState {
 
         let subtabs = [
             (DocSubTab::Edit, "编辑"),
-            (DocSubTab::Split, "分栏"),
             (DocSubTab::Preview, "预览"),
         ];
         let sub_w = 64.0;

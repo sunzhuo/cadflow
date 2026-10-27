@@ -43,6 +43,8 @@ mod web {
         sidebar_width: f32,
         sidebar_state: crate::sidebar::SidebarState,
         show_help_dialog: bool,
+        font_data: Option<Arc<egui::FontData>>,
+        font_installed: bool,
         opened_windows: std::collections::HashMap<egui::LayerId, egui::emath::TSTransform>,
     }
 
@@ -73,6 +75,22 @@ mod web {
                 s.text_styles.insert(egui::TextStyle::Button, egui::FontId::proportional(13.5));
                 s.text_styles.insert(egui::TextStyle::Small, egui::FontId::proportional(12.0));
             });
+
+            // 在 CadApp::logic 完成后注册中文字体（避免被其初次 install_fonts 覆盖）
+            if !self.font_installed
+                && let Some(font_data) = &self.font_data
+            {
+                let mut fonts = egui::FontDefinitions::default();
+                fonts.font_data.insert("chinese-custom".into(), font_data.clone());
+                if let Some(f) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
+                    f.insert(0, "chinese-custom".into());
+                }
+                if let Some(f) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
+                    f.push("chinese-custom".into());
+                }
+                ctx.set_fonts(fonts);
+                self.font_installed = true;
+            }
 
             if let Some((bridge, reported)) = &self.host {
                 bridge.report_dirty(&self.app, reported);
@@ -277,6 +295,18 @@ mod web {
         }
     }
 
+    async fn fetch_font(path: &str) -> Option<Vec<u8>> {
+        let window = web_sys::window()?;
+        let resp_value = wasm_bindgen_futures::JsFuture::from(window.fetch_with_str(path)).await.ok()?;
+        let resp: web_sys::Response = resp_value.dyn_into().ok()?;
+        if !resp.ok() {
+            return None;
+        }
+        let array_buf_val = wasm_bindgen_futures::JsFuture::from(resp.array_buffer().ok()?).await.ok()?;
+        let array = js_sys::Uint8Array::new(&array_buf_val);
+        Some(array.to_vec())
+    }
+
     /// 构建初始停靠布局：主中央绘图区 (Canvas) 占满空间，其他面板隐藏至外层独立侧边栏
     fn initial_docking_workspace() -> cadcraft_ui_egui::docking::Workspace {
         craft_ui::docking::Workspace::new(Layout {
@@ -319,6 +349,10 @@ mod web {
                 log::error!("missing <canvas id=\"{CANVAS_ID}\">");
                 return;
             };
+
+            // 预加载中文字体
+            let font_bytes = fetch_font("assets/font.ttf").await;
+            let font_data = font_bytes.map(|b| Arc::new(egui::FontData::from_owned(b)));
 
             let mut options = eframe::WebOptions::default();
             if query().contains("webgl")
@@ -407,6 +441,8 @@ mod web {
                             sidebar_width: crate::buerligons::SIDEBAR_DEFAULT_WIDTH,
                             sidebar_state: crate::sidebar::SidebarState::default(),
                             show_help_dialog: false,
+                            font_data,
+                            font_installed: false,
                             opened_windows: std::collections::HashMap::new(),
                         }))
                     }),

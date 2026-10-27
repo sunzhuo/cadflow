@@ -2,36 +2,17 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "⚡ 快速预览 (Trunk Serve - 实时热重载开发)",
+      "label": "⚡ 快速预览 (Trunk Serve)",
       "type": "shell",
-      "command": "trunk serve --open --address 127.0.0.1",
+      "command": "trunk serve --open",
       "options": {
-        "cwd": "${workspaceFolder}/cadflow-web",
-        "env": {
-          "PATH": "C:\\Users\\Mixwind\\.cargo\\bin;${env:PATH}"
-        }
+        "cwd": "${workspaceFolder}/cadflow-web"
       },
       "isBackground": true,
       "problemMatcher": [],
-      "presentation": {
-        "reveal": "always",
-        "panel": "dedicated",
-        "focus": false
-      },
       "group": {
         "kind": "build",
         "isDefault": true
-      }
-    },
-    {
-      "label": "🌐 即时秒开预览 (Static Dist - 无需等待编译)",
-      "type": "shell",
-      "command": "powershell -Command \"Start-Process 'http://127.0.0.1:8788'; python -m http.server 8788 --directory dist\"",
-      "isBackground": true,
-      "problemMatcher": [],
-      "presentation": {
-        "reveal": "always",
-        "panel": "dedicated"
       }
     },
     {
@@ -39,10 +20,7 @@
       "type": "shell",
       "command": "trunk build --release",
       "options": {
-        "cwd": "${workspaceFolder}/cadflow-web",
-        "env": {
-          "PATH": "C:\\Users\\Mixwind\\.cargo\\bin;${env:PATH}"
-        }
+        "cwd": "${workspaceFolder}/cadflow-web"
       },
       "problemMatcher": ["$rustc"],
       "group": "build"
