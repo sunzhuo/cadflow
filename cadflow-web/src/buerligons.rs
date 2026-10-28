@@ -244,6 +244,33 @@ pub fn draw_tool_icon_button(
     resp
 }
 
+pub fn draw_doc_tool_btn(ui: &mut Ui, icon: crate::doc_icons::DocIcon, tooltip: &str) -> egui::Response {
+    let t = Tokens::get();
+    let btn_sz = 28.0;
+    let (rect, resp) = ui.allocate_exact_size(vec2(btn_sz, btn_sz), Sense::click());
+    let resp = resp.on_hover_text(tooltip);
+
+    if ui.is_rect_visible(rect) {
+        let bg = if resp.is_pointer_button_down_on() {
+            t.control
+        } else if resp.hovered() {
+            t.control_hover.gamma_multiply(0.5)
+        } else {
+            Color32::TRANSPARENT
+        };
+
+        if bg != Color32::TRANSPARENT {
+            ui.painter().rect_filled(rect, CornerRadius::same(5), bg);
+        }
+
+        let icon_sz = 16.0;
+        let icon_rect = Rect::from_center_size(rect.center(), vec2(icon_sz, icon_sz));
+        crate::doc_icons::paint_doc_icon(ui.painter(), icon_rect, icon, t.text);
+    }
+    resp
+}
+
+#[allow(dead_code)]
 pub fn draw_stackedit_btn(ui: &mut Ui, label: &str, tooltip: &str) -> egui::Response {
     let t = Tokens::get();
     let btn_sz = 28.0;
@@ -271,6 +298,129 @@ pub fn draw_stackedit_btn(ui: &mut Ui, label: &str, tooltip: &str) -> egui::Resp
             t.text,
         );
     }
+    resp
+}
+
+// ----------------------------------------------------------------------------
+// 播放控制器状态与速度滑块
+// ----------------------------------------------------------------------------
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PlaybackState {
+    pub is_playing: bool,
+    pub speed_progress: f32, // 0.0 .. 1.0 (0.35 对应初始 5x)
+    pub show_settings: bool,
+}
+
+impl Default for PlaybackState {
+    fn default() -> Self {
+        Self {
+            is_playing: false,
+            speed_progress: 0.35,
+            show_settings: false,
+        }
+    }
+}
+
+pub fn progress_to_speed_text(p: f32) -> String {
+    if p >= 0.98 {
+        "MAX".to_string()
+    } else if p <= 0.01 {
+        "0.1x".to_string()
+    } else if p < 0.35 {
+        // 0.01..0.35 映射到 0.1x .. 5.0x
+        let t = (p - 0.01) / 0.34;
+        let val = 0.1 + (5.0 - 0.1) * t;
+        if val < 1.0 {
+            format!("{:.1}x", val)
+        } else {
+            format!("{:.0}x", val.round())
+        }
+    } else {
+        // 0.35..0.98 映射到 5.0x .. 50.0x
+        let t = (p - 0.35) / 0.63;
+        if t < 0.03 {
+            "5x".to_string()
+        } else {
+            let val = 5.0 + (50.0 - 5.0) * t;
+            format!("{:.0}x", val.round())
+        }
+    }
+}
+
+pub fn draw_speed_slider(ui: &mut Ui, progress: &mut f32) -> egui::Response {
+    let track_w = 84.0;
+    let track_h = 7.0;
+    let thumb_r = 6.0;
+    let (rect, resp) = ui.allocate_exact_size(vec2(track_w, TOOL_SIZE), Sense::click_and_drag());
+    let resp = resp.on_hover_text(format!("调节速度 (当前: {})", progress_to_speed_text(*progress)));
+
+    if (resp.clicked() || resp.dragged())
+        && let Some(pos) = resp.interact_pointer_pos()
+    {
+        let left = rect.left() + thumb_r;
+        let right = rect.right() - thumb_r;
+        let new_p = if right > left {
+            ((pos.x - left) / (right - left)).clamp(0.0, 1.0)
+        } else {
+            0.5
+        };
+        *progress = new_p;
+    }
+
+    if ui.is_rect_visible(rect) {
+        let p = ui.painter();
+        let center_y = rect.center().y;
+        let left_x = rect.left() + thumb_r;
+        let right_x = rect.right() - thumb_r;
+        let thumb_x = left_x + (right_x - left_x) * (*progress).clamp(0.0, 1.0);
+
+        // 1. 底槽胶囊条 (暗色背景，对应截图)
+        let track_rect = Rect::from_center_size(
+            pos2(rect.center().x, center_y),
+            vec2(rect.width(), track_h),
+        );
+        p.rect_filled(
+            track_rect,
+            CornerRadius::same((track_h / 2.0).round() as u8),
+            Color32::from_rgb(46, 50, 56),
+        );
+        p.rect_stroke(
+            track_rect,
+            CornerRadius::same((track_h / 2.0).round() as u8),
+            Stroke::new(1.0, Color32::from_rgb(62, 66, 74)),
+            egui::StrokeKind::Inside,
+        );
+
+        // 2. 激活段填充 (浅亮灰胶囊左侧部分)
+        if thumb_x > rect.left() + 2.0 {
+            let active_rect = Rect::from_min_max(
+                track_rect.min,
+                pos2(thumb_x.min(track_rect.right()), track_rect.max.y),
+            );
+            p.rect_filled(
+                active_rect,
+                CornerRadius {
+                    nw: (track_h / 2.0).round() as u8,
+                    sw: (track_h / 2.0).round() as u8,
+                    ne: 0,
+                    se: 0,
+                },
+                Color32::from_rgb(220, 224, 230),
+            );
+        }
+
+        // 3. 滑动手柄圆形圆钮 (白色圆形小手柄)
+        let thumb_center = pos2(thumb_x, center_y);
+        p.circle_filled(thumb_center, thumb_r + 1.0, Color32::from_black_alpha(45));
+        p.circle_filled(thumb_center, thumb_r, Color32::from_rgb(240, 242, 246));
+        p.circle_stroke(
+            thumb_center,
+            thumb_r,
+            Stroke::new(0.8, Color32::from_rgb(205, 209, 215)),
+        );
+    }
+
     resp
 }
 
@@ -456,46 +606,46 @@ pub fn draw_top_toolbar(
                         if slide_progress > 0.5 {
                             draw_toolbar_sep(ui);
 
-                            if draw_stackedit_btn(ui, "B", "粗体 (Ctrl+Shift+B)").clicked() {
+                            if draw_doc_tool_btn(ui, crate::doc_icons::DocIcon::Bold, &format!("加粗 ({})", format_shortcut("Cmd+Shift+B", mac))).clicked() {
                                 doc_action = Some(crate::doc_panel::DocAction::Bold);
                             }
-                            if draw_stackedit_btn(ui, "I", "斜体 (Ctrl+Shift+I)").clicked() {
+                            if draw_doc_tool_btn(ui, crate::doc_icons::DocIcon::Italic, &format!("斜体 ({})", format_shortcut("Cmd+Shift+I", mac))).clicked() {
                                 doc_action = Some(crate::doc_panel::DocAction::Italic);
                             }
-                            if draw_stackedit_btn(ui, "H", "标题 (Ctrl+Shift+H)").clicked() {
+                            if draw_doc_tool_btn(ui, crate::doc_icons::DocIcon::Heading, &format!("标题 ({})", format_shortcut("Cmd+Shift+H", mac))).clicked() {
                                 doc_action = Some(crate::doc_panel::DocAction::Heading);
                             }
-                            if draw_stackedit_btn(ui, "~~", "删除线 (Ctrl+Shift+S)").clicked() {
+                            if draw_doc_tool_btn(ui, crate::doc_icons::DocIcon::Strikethrough, &format!("删除线 ({})", format_shortcut("Cmd+Shift+S", mac))).clicked() {
                                 doc_action = Some(crate::doc_panel::DocAction::Strikethrough);
                             }
 
                             draw_toolbar_sep(ui);
 
-                            if draw_stackedit_btn(ui, "•—", "无序列表 (Ctrl+Shift+U)").clicked() {
+                            if draw_doc_tool_btn(ui, crate::doc_icons::DocIcon::UnorderedList, &format!("无序列表 ({})", format_shortcut("Cmd+Shift+U", mac))).clicked() {
                                 doc_action = Some(crate::doc_panel::DocAction::UnorderedList);
                             }
-                            if draw_stackedit_btn(ui, "1.", "有序列表 (Ctrl+Shift+O)").clicked() {
+                            if draw_doc_tool_btn(ui, crate::doc_icons::DocIcon::OrderedList, &format!("有序列表 ({})", format_shortcut("Cmd+Shift+O", mac))).clicked() {
                                 doc_action = Some(crate::doc_panel::DocAction::OrderedList);
                             }
-                            if draw_stackedit_btn(ui, "☑", "待办清单 (Ctrl+Shift+C)").clicked() {
+                            if draw_doc_tool_btn(ui, crate::doc_icons::DocIcon::CheckList, &format!("待办清单 ({})", format_shortcut("Cmd+Shift+C", mac))).clicked() {
                                 doc_action = Some(crate::doc_panel::DocAction::CheckList);
                             }
 
                             draw_toolbar_sep(ui);
 
-                            if draw_stackedit_btn(ui, "”", "引用块 (Ctrl+Shift+Q)").clicked() {
+                            if draw_doc_tool_btn(ui, crate::doc_icons::DocIcon::Blockquote, &format!("引用块 ({})", format_shortcut("Cmd+Shift+Q", mac))).clicked() {
                                 doc_action = Some(crate::doc_panel::DocAction::Quote);
                             }
-                            if draw_stackedit_btn(ui, "< >", "代码块 (Ctrl+Shift+K)").clicked() {
+                            if draw_doc_tool_btn(ui, crate::doc_icons::DocIcon::Code, &format!("代码块 ({})", format_shortcut("Cmd+Shift+K", mac))).clicked() {
                                 doc_action = Some(crate::doc_panel::DocAction::Code);
                             }
-                            if draw_stackedit_btn(ui, "⊞", "表格 (Ctrl+Shift+T)").clicked() {
+                            if draw_doc_tool_btn(ui, crate::doc_icons::DocIcon::Table, &format!("表格 ({})", format_shortcut("Cmd+Shift+T", mac))).clicked() {
                                 doc_action = Some(crate::doc_panel::DocAction::Table);
                             }
-                            if draw_stackedit_btn(ui, "🔗", "链接 (Ctrl+Shift+L)").clicked() {
+                            if draw_doc_tool_btn(ui, crate::doc_icons::DocIcon::Link, &format!("超链接 ({})", format_shortcut("Cmd+Shift+L", mac))).clicked() {
                                 doc_action = Some(crate::doc_panel::DocAction::Link);
                             }
-                            if draw_stackedit_btn(ui, "🖼", "图片 (Ctrl+Shift+G)").clicked() {
+                            if draw_doc_tool_btn(ui, crate::doc_icons::DocIcon::Image, &format!("图片 ({})", format_shortcut("Cmd+Shift+G", mac))).clicked() {
                                 doc_action = Some(crate::doc_panel::DocAction::Image);
                             }
                         }
@@ -523,6 +673,111 @@ pub fn draw_top_toolbar(
                             .show(ui, |ui| {
                                 ui.horizontal_centered(|ui| {
                                     ui.spacing_mut().item_spacing.x = TOOL_SPACING;
+
+                                    // --------------------------------------------------------
+                                    // 播放控制组件组 (播放/暂停、停止、“速度”、进度条、速度文本、“设置”)
+                                    // --------------------------------------------------------
+                                    let playback_id = egui::Id::new("cadflow_playback_toolbar_state");
+                                    let mut playback_state = ui.data_mut(|d| d.get_temp::<PlaybackState>(playback_id)).unwrap_or_default();
+
+                                    // [1] 播放 / 暂停按钮 (点击切换状态)
+                                    let play_tip = if playback_state.is_playing { "暂停" } else { "播放" };
+                                    let play_resp = draw_tool_icon_button(
+                                        ui,
+                                        TOOL_SIZE,
+                                        MAIN_ICON_SIZE,
+                                        playback_state.is_playing,
+                                        play_tip,
+                                        |p, rect| {
+                                            let icon = if playback_state.is_playing {
+                                                crate::doc_icons::DocIcon::Pause
+                                            } else {
+                                                crate::doc_icons::DocIcon::Play
+                                            };
+                                            crate::doc_icons::paint_doc_icon(p, rect, icon, t.text);
+                                        },
+                                    );
+                                    if play_resp.clicked() {
+                                        playback_state.is_playing = !playback_state.is_playing;
+                                    }
+
+                                    // [2] 停止按钮
+                                    let stop_resp = draw_tool_icon_button(
+                                        ui,
+                                        TOOL_SIZE,
+                                        MAIN_ICON_SIZE,
+                                        false,
+                                        "停止",
+                                        |p, rect| {
+                                            crate::doc_icons::paint_doc_icon(p, rect, crate::doc_icons::DocIcon::Stop, t.text);
+                                        },
+                                    );
+                                    if stop_resp.clicked() {
+                                        playback_state.is_playing = false;
+                                    }
+
+                                    // [3] “速度”标签
+                                    ui.add_space(4.0);
+                                    ui.label(RichText::new("速度").size(13.0).color(t.text));
+                                    ui.add_space(2.0);
+
+                                    // [4] 进度条 / 速度滑块
+                                    draw_speed_slider(ui, &mut playback_state.speed_progress);
+                                    ui.add_space(2.0);
+
+                                    // [5] 速度文本展示 (初始 5x，最小 0.1x，最大 MAX)
+                                    let speed_text = progress_to_speed_text(playback_state.speed_progress);
+                                    ui.allocate_ui(vec2(32.0, TOOL_SIZE), |ui| {
+                                        ui.centered_and_justified(|ui| {
+                                            ui.label(RichText::new(speed_text).size(13.0).color(t.text));
+                                        });
+                                    });
+                                    ui.add_space(2.0);
+
+                                    // [6] 设置按钮
+                                    let settings_resp = draw_tool_icon_button(
+                                        ui,
+                                        TOOL_SIZE,
+                                        MAIN_ICON_SIZE,
+                                        playback_state.show_settings,
+                                        "设置",
+                                        |p, rect| {
+                                            crate::doc_icons::paint_doc_icon(p, rect, crate::doc_icons::DocIcon::Settings, t.text);
+                                        },
+                                    );
+                                    if settings_resp.clicked() {
+                                        playback_state.show_settings = !playback_state.show_settings;
+                                    }
+
+                                    if playback_state.show_settings {
+                                        egui::Window::new("播放设置")
+                                            .collapsible(false)
+                                            .resizable(false)
+                                            .open(&mut playback_state.show_settings)
+                                            .anchor(egui::Align2::LEFT_TOP, [center_rect.left() + 40.0, BAR_HEIGHT + 4.0])
+                                            .show(ui.ctx(), |ui| {
+                                                ui.label(RichText::new("速度快捷切换:").strong());
+                                                ui.horizontal(|ui| {
+                                                    for (preset_p, label) in [
+                                                        (0.01, "0.1x"),
+                                                        (0.08, "1x"),
+                                                        (0.15, "2x"),
+                                                        (0.35, "5x"),
+                                                        (0.42, "10x"),
+                                                        (1.0, "MAX"),
+                                                    ] {
+                                                        if ui.button(label).clicked() {
+                                                            playback_state.speed_progress = preset_p;
+                                                        }
+                                                    }
+                                                });
+                                            });
+                                    }
+
+                                    ui.data_mut(|d| d.insert_temp(playback_id, playback_state));
+
+                                    // 分隔线：播放控制组与 CAD 绘图视图工具组(从“范围缩放”开始)之间
+                                    draw_toolbar_sep(ui);
 
                                     for (g_idx, group) in CAD_TOOL_GROUPS.iter().enumerate() {
                                         // Req 4: 第一个工具组前不画分隔线 (以侧边栏边界线代替)

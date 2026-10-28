@@ -1,14 +1,22 @@
 //! Markdown document panel and editor for CADFlow.
 //!
 //! Refactored to mount native HTML <div> overlay powered by EasyMDE:
-//! - Top header: "文档" title and [编辑] [预览] sub-tabs styled matching Tool Sets
+//! - Top header: "文档" title matching CADCraft Tool Sets style
+//! - Sub header: File tabs ("未命名", editable on click, '+' to create "未命名"+number, switchable)
 //! - Content area: mounts native HTML <div> overlay with EasyMDE for native Chinese IME, typography & performance
-//! - Bottom footer: "清空内容" quick action button and live character counter
+//! - Bottom footer: "预览" toggle button (pressed/raised states) and live character counter
 //! - Sub-pixel synchronized sliding animation: overlay rectangle coordinates sync every frame with the panel
 
-use egui::{pos2, vec2, Color32, Rect, Sense, Ui};
+use std::sync::Arc;
+use egui::{pos2, vec2, Color32, CornerRadius, Rect, Sense, Stroke, Ui};
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::JsCast;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DocFile {
+    pub title: String,
+    pub content: String,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum DocSubTab {
@@ -80,12 +88,19 @@ pub const DEFAULT_DOC_TEMPLATE: &str = r#"# 数字化工程设计与技术说明
 ## 4. 技术备忘与注意事项
 > 📌 **重要提示**：
 > 1. 本面板支持全功能 **Markdown** 原生 DOM 编辑与实时渲染；
-> 2. 点击上方子标签可切换【编辑】与【预览】；
-> 3. 顶部主工具栏提供 Markdown 快捷操作工具组；
-> 4. 点击【文档】按钮可平滑展开与折叠文档侧边栏。
+> 2. 点击下方【预览】按钮可切换编辑与预览视图（有按下与抬起两种状态）；
+> 3. 点击上方文件标签可切换文档或点击修改名称，点击右侧【+】号分配“未命名”+数字新建文档；
+> 4. 顶部主工具栏提供 Markdown 快捷操作工具组；
+> 5. 点击【文档】按钮可平滑展开与折叠文档侧边栏。
 "#;
 
 pub struct DocState {
+    pub files: Vec<DocFile>,
+    pub active_index: usize,
+    pub next_file_number: usize,
+    pub is_preview: bool,
+    pub editing_tab: Option<usize>,
+    pub just_started_editing: bool,
     pub title: String,
     pub content: String,
     pub sub_tab: DocSubTab,
@@ -102,9 +117,20 @@ impl Default for DocState {
 
 impl DocState {
     pub fn new() -> Self {
+        let default_title = "未命名".to_string();
+        let default_content = DEFAULT_DOC_TEMPLATE.to_string();
         Self {
-            title: "设计说明.md".to_string(),
-            content: DEFAULT_DOC_TEMPLATE.to_string(),
+            files: vec![DocFile {
+                title: default_title.clone(),
+                content: default_content.clone(),
+            }],
+            active_index: 0,
+            next_file_number: 1,
+            is_preview: false,
+            editing_tab: None,
+            just_started_editing: false,
+            title: default_title,
+            content: default_content,
             sub_tab: DocSubTab::Edit,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
@@ -114,6 +140,11 @@ impl DocState {
 
     /// 执行来自顶部工具栏的 Markdown 编辑操作 (通过 EasyMDE 实例 API 实现)
     pub fn apply_action(&mut self, action: DocAction) {
+        // 若当前处于预览状态，执行编辑操作前自动退出预览
+        if self.is_preview {
+            self.set_preview(false);
+        }
+
         let js = match action {
             DocAction::Undo => "if (window.__cadflow_easymde) { window.__cadflow_easymde.codemirror.undo(); }",
             DocAction::Redo => "if (window.__cadflow_easymde) { window.__cadflow_easymde.codemirror.redo(); }",
@@ -133,35 +164,52 @@ impl DocState {
         let _ = js_sys::eval(js);
     }
 
-    /// 切换子标签模式并同步 EasyMDE 的视图 (编辑 / 预览)
-    pub fn set_subtab(&mut self, target: DocSubTab) {
-        self.sub_tab = target;
-        let script = match target {
-            DocSubTab::Edit => {
-                r#"
-                if (window.__cadflow_easymde) {
-                    const mde = window.__cadflow_easymde;
-                    if (mde.isPreviewActive()) { EasyMDE.togglePreview(mde); }
-                    if (mde.isSideBySideActive()) { EasyMDE.toggleSideBySide(mde); }
-                    mde.codemirror.refresh();
-                }
-                "#
+    /// 切换预览状态（按下/抬起）
+    pub fn toggle_preview(&mut self) {
+        self.set_preview(!self.is_preview);
+    }
+
+    /// 设置预览状态并同步 EasyMDE 的视图模式
+    pub fn set_preview(&mut self, preview: bool) {
+        self.is_preview = preview;
+        self.sub_tab = if preview { DocSubTab::Preview } else { DocSubTab::Edit };
+
+        if let Some(window) = web_sys::window() {
+            let is_prev_val = wasm_bindgen::JsValue::from_bool(preview);
+            let _ = js_sys::Reflect::set(&window, &"__cadflow_doc_is_preview".into(), &is_prev_val);
+        }
+
+        let script = if preview {
+            r#"
+            if (window.__cadflow_easymde) {
+                const mde = window.__cadflow_easymde;
+                if (mde.isSideBySideActive()) { EasyMDE.toggleSideBySide(mde); }
+                if (!mde.isPreviewActive()) { EasyMDE.togglePreview(mde); }
             }
-            DocSubTab::Preview => {
-                r#"
-                if (window.__cadflow_easymde) {
-                    const mde = window.__cadflow_easymde;
-                    if (mde.isSideBySideActive()) { EasyMDE.toggleSideBySide(mde); }
-                    if (!mde.isPreviewActive()) { EasyMDE.togglePreview(mde); }
-                }
-                "#
+            "#
+        } else {
+            r#"
+            if (window.__cadflow_easymde) {
+                const mde = window.__cadflow_easymde;
+                if (mde.isPreviewActive()) { EasyMDE.togglePreview(mde); }
+                if (mde.isSideBySideActive()) { EasyMDE.toggleSideBySide(mde); }
+                mde.codemirror.refresh();
             }
+            "#
         };
         let _ = js_sys::eval(script);
     }
 
+    /// 保持向后兼容：切换子标签模式
+    pub fn set_subtab(&mut self, target: DocSubTab) {
+        self.set_preview(target == DocSubTab::Preview);
+    }
+
     /// 清空 EasyMDE 文本内容
-    pub fn clear_easymde_content(&self) {
+    pub fn clear_easymde_content(&mut self) {
+        if let Some(file) = self.files.get_mut(self.active_index) {
+            file.content.clear();
+        }
         let _ = js_sys::eval(
             r#"
             if (window.__cadflow_easymde) {
@@ -175,13 +223,129 @@ impl DocState {
         );
     }
 
+    /// 更新 EasyMDE 中的内容 (安全地通过 window 传递，避免转义问题)
+    pub fn set_easymde_content(&self, content: &str) {
+        if let Some(window) = web_sys::window() {
+            let js_val = wasm_bindgen::JsValue::from_str(content);
+            let _ = js_sys::Reflect::set(&window, &"__cadflow_temp_doc_content".into(), &js_val);
+            let is_prev_val = wasm_bindgen::JsValue::from_bool(self.is_preview);
+            let _ = js_sys::Reflect::set(&window, &"__cadflow_doc_is_preview".into(), &is_prev_val);
+            let script = r#"
+                if (window.__cadflow_easymde) {
+                    const mde = window.__cadflow_easymde;
+                    mde.value(window.__cadflow_temp_doc_content || "");
+                    delete window.__cadflow_temp_doc_content;
+                    if (window.__cadflow_doc_is_preview) {
+                        if (mde.isSideBySideActive()) { EasyMDE.toggleSideBySide(mde); }
+                        if (mde.isPreviewActive()) {
+                            EasyMDE.togglePreview(mde);
+                            EasyMDE.togglePreview(mde);
+                        } else {
+                            EasyMDE.togglePreview(mde);
+                        }
+                    } else {
+                        if (mde.isPreviewActive()) {
+                            EasyMDE.togglePreview(mde);
+                        }
+                        if (mde.isSideBySideActive()) { EasyMDE.toggleSideBySide(mde); }
+                        mde.codemirror.refresh();
+                    }
+                    mde.codemirror.clearHistory();
+                }
+            "#;
+            let _ = js_sys::eval(script);
+        }
+    }
+
+    /// 新建文档（分配“未命名”+数字）
+    pub fn create_new_doc(&mut self) {
+        // 1. 保存当前激活标签页的内容
+        let current_text = self.get_content();
+        if let Some(active_file) = self.files.get_mut(self.active_index) {
+            active_file.content = current_text;
+        }
+
+        // 2. 分配名称：“未命名”+数字
+        let mut num = self.next_file_number;
+        while self.files.iter().any(|f| f.title == format!("未命名{}", num)) {
+            num += 1;
+        }
+        let title = format!("未命名{}", num);
+        self.next_file_number = num + 1;
+
+        // 3. 追加新文档
+        self.files.push(DocFile {
+            title,
+            content: String::new(),
+        });
+
+        // 4. 切换到新建文档，退出预览状态并清空编辑器
+        self.active_index = self.files.len() - 1;
+        self.editing_tab = None;
+        if self.is_preview {
+            self.set_preview(false);
+        }
+        self.set_easymde_content("");
+    }
+
+    /// 切换到指定索引的文件标签页
+    pub fn switch_to_tab(&mut self, new_index: usize) {
+        if new_index >= self.files.len() || new_index == self.active_index {
+            return;
+        }
+        // 1. 保存当前激活标签页的内容
+        let current_text = self.get_content();
+        if let Some(active_file) = self.files.get_mut(self.active_index) {
+            active_file.content = current_text;
+        }
+
+        // 2. 更新激活索引
+        self.active_index = new_index;
+        self.editing_tab = None;
+
+        // 3. 载入目标文档内容至 EasyMDE
+        let target_content = self.files[new_index].content.clone();
+        self.set_easymde_content(&target_content);
+    }
+
+    /// 关闭指定索引的文件标签页（当文件数大于1时）
+    pub fn close_tab(&mut self, index: usize) {
+        if self.files.len() <= 1 || index >= self.files.len() {
+            return;
+        }
+
+        let is_closing_active = index == self.active_index;
+        let new_active = if index < self.active_index {
+            self.active_index - 1
+        } else if index == self.active_index {
+            if index >= self.files.len() - 1 {
+                self.active_index.saturating_sub(1)
+            } else {
+                self.active_index
+            }
+        } else {
+            self.active_index
+        };
+
+        self.files.remove(index);
+        self.active_index = new_active.min(self.files.len() - 1);
+        self.editing_tab = None;
+
+        if is_closing_active {
+            let target_content = self.files[self.active_index].content.clone();
+            self.set_easymde_content(&target_content);
+        }
+    }
+
     /// 获取当前 EasyMDE 中的字符数量（用于底部状态栏展示）
     pub fn get_char_count(&self) -> usize {
         js_sys::eval("window.__cadflow_easymde ? Array.from(window.__cadflow_easymde.value()).length : 0")
             .ok()
             .and_then(|v| v.as_f64())
             .map(|n| n as usize)
-            .unwrap_or(0)
+            .unwrap_or_else(|| {
+                self.files.get(self.active_index).map(|f| f.content.chars().count()).unwrap_or(0)
+            })
     }
 
     /// 获取 EasyMDE 当前文本
@@ -189,7 +353,9 @@ impl DocState {
         js_sys::eval("window.__cadflow_easymde ? window.__cadflow_easymde.value() : ''")
             .ok()
             .and_then(|v| v.as_string())
-            .unwrap_or_else(|| self.content.clone())
+            .unwrap_or_else(|| {
+                self.files.get(self.active_index).map(|f| f.content.clone()).unwrap_or_default()
+            })
     }
 
     /// 通过 web-sys 在 body 下挂载原生 <div> 浮层并初始化 EasyMDE
@@ -211,7 +377,8 @@ impl DocState {
             let Ok(textarea) = document.create_element("textarea") else { return };
             let Ok(textarea) = textarea.dyn_into::<web_sys::HtmlTextAreaElement>() else { return };
             textarea.set_id("doc-easymde-textarea");
-            textarea.set_value(DEFAULT_DOC_TEMPLATE);
+            let initial_content = self.files.get(self.active_index).map(|f| f.content.as_str()).unwrap_or(DEFAULT_DOC_TEMPLATE);
+            textarea.set_value(initial_content);
 
             if overlay_div.append_child(&textarea).is_err() {
                 return;
@@ -237,6 +404,10 @@ impl DocState {
                 })();
             "#;
             let _ = js_sys::eval(init_js);
+
+            if self.is_preview {
+                let _ = js_sys::eval("if (window.__cadflow_easymde && !window.__cadflow_easymde.isPreviewActive()) { EasyMDE.togglePreview(window.__cadflow_easymde); }");
+            }
         }
 
         self.overlay_mounted = true;
@@ -271,16 +442,22 @@ impl DocState {
         }
     }
 
-    /// 渲染文档侧边栏面板界面 (Req 2, Req 3)
+    /// 渲染文档侧边栏面板界面
     pub fn ui(&mut self, ui: &mut Ui) {
         let t = cadcraft_ui_egui::theme::Tokens::get();
         let p = ui.painter().clone();
 
-        // 消除标签行与内容行之间的默认垂直间距，确保主标签与次标签无缝贴合 (Req 2)
+        // 同步 title 和 sub_tab
+        if let Some(f) = self.files.get(self.active_index) {
+            self.title = f.title.clone();
+        }
+        self.sub_tab = if self.is_preview { DocSubTab::Preview } else { DocSubTab::Edit };
+
+        // 消除标签行与内容行之间的默认垂直间距，确保主标签与次标签无缝贴合
         ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
 
         // --------------------------------------------------------------------
-        // 1. 第一行：“文档”主标签栏 (高度 28px，严格参考 CADCraft 工具集主标签样式，Req 7, 9)
+        // 1. 第一行：“文档”主标签栏 (高度 28px，严格参考 CADCraft 工具集主标签样式)
         // --------------------------------------------------------------------
         let main_h = 28.0;
         let full_w = ui.available_width();
@@ -300,46 +477,192 @@ impl DocState {
         );
 
         // --------------------------------------------------------------------
-        // 2. 第二行：“编辑”与“预览”次标签栏 (高度 26px，无缝紧贴主标签，0 空隙，Req 2, Req 3)
+        // 2. 第二行：文件标签栏 (高度 26px，无缝紧贴主标签，支持文件标签切换、重命名及新建)
         // --------------------------------------------------------------------
         let sub_h = 26.0;
         let (sub_bar_rect, _) = ui.allocate_exact_size(vec2(full_w, sub_h), Sense::hover());
-        p.rect_filled(sub_bar_rect, 0.0, t.chrome);
+        p.rect_filled(sub_bar_rect, 0.0, t.chrome_dark);
+        p.hline(sub_bar_rect.x_range(), sub_bar_rect.bottom(), Stroke::new(1.0, t.border));
 
-        let subtabs = [
-            (DocSubTab::Edit, "编辑"),
-            (DocSubTab::Preview, "预览"),
-        ];
-        let sub_w = 64.0;
-        let mut sub_x = sub_bar_rect.left();
-        let mut clicked_sub = None;
+        let mut switch_to = None;
+        let mut tab_to_close = None;
+        let mut start_editing = None;
+        let mut create_new = false;
+        let mut finish_editing = false;
 
-        for (variant, label) in subtabs {
-            let tr = Rect::from_min_size(pos2(sub_x, sub_bar_rect.top() + 1.0), vec2(sub_w, sub_h - 2.0));
-            let active = self.sub_tab == variant;
-            let resp = ui.interact(tr, ui.id().with(("doc_subtab", label)), Sense::click());
+        ui.scope_builder(
+            egui::UiBuilder::new().max_rect(sub_bar_rect),
+            |tab_ui| {
+                tab_ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+                egui::ScrollArea::horizontal()
+                    .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                    .show(tab_ui, |tab_ui| {
+                        tab_ui.horizontal(|tab_ui| {
+                            tab_ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+                            let font_id = egui::FontId::proportional(12.0);
+                            let closable = self.files.len() > 1;
 
-            p.rect_filled(tr, 0.0, if active { t.tab_active } else { t.chrome });
-            p.text(
-                tr.center(),
-                egui::Align2::CENTER_CENTER,
-                label,
-                egui::FontId::proportional(12.5),
-                if active { t.text } else { t.text_dim },
-            );
+                            for (i, file) in self.files.iter_mut().enumerate() {
+                                let active = self.active_index == i;
+                                let is_editing = self.editing_tab == Some(i);
 
-            if resp.clicked() {
-                clicked_sub = Some(variant);
+                                // 测量文字宽度
+                                let text_w = tab_ui.painter().layout_no_wrap(file.title.clone(), font_id.clone(), t.text).size().x;
+                                let close_reserve = if closable { 16.0 } else { 0.0 };
+                                let tab_w = (text_w + 18.0 + close_reserve).clamp(64.0, 160.0);
+
+                                if is_editing {
+                                    let (tab_rect, _) = tab_ui.allocate_exact_size(vec2(tab_w, sub_h), Sense::hover());
+                                    p.rect_filled(tab_rect, 0.0, t.tab_active);
+                                    p.hline(tab_rect.x_range(), tab_rect.top(), Stroke::new(1.5, t.accent));
+                                    p.vline(tab_rect.right(), tab_rect.y_range(), Stroke::new(1.0, t.border));
+
+                                    tab_ui.scope_builder(
+                                        egui::UiBuilder::new().max_rect(tab_rect.shrink2(vec2(4.0, 2.0))),
+                                        |edit_ui| {
+                                            let edit_resp = edit_ui.add(
+                                                egui::TextEdit::singleline(&mut file.title)
+                                                    .font(font_id.clone())
+                                                    .desired_width(tab_w - 8.0),
+                                            );
+                                            if self.just_started_editing {
+                                                edit_resp.request_focus();
+                                                self.just_started_editing = false;
+                                            }
+                                            if edit_resp.lost_focus() || edit_ui.input(|inp| inp.key_pressed(egui::Key::Enter) || inp.key_pressed(egui::Key::Escape)) {
+                                                finish_editing = true;
+                                            }
+                                        },
+                                    );
+                                } else {
+                                    let (tab_rect, tab_resp) = tab_ui.allocate_exact_size(vec2(tab_w, sub_h), Sense::click());
+                                    let hovered = tab_resp.hovered();
+
+                                    let bg_col = if active {
+                                        t.tab_active
+                                    } else if hovered {
+                                        t.chrome
+                                    } else {
+                                        t.chrome_dark
+                                    };
+                                    p.rect_filled(tab_rect, 0.0, bg_col);
+                                    if active {
+                                        p.hline(tab_rect.x_range(), tab_rect.top(), Stroke::new(1.5, t.accent));
+                                    }
+                                    p.vline(tab_rect.right(), tab_rect.y_range(), Stroke::new(1.0, t.border));
+
+                                    // 关闭按钮 (多于一个标签时显示)
+                                    let mut close_clicked = false;
+                                    if closable {
+                                        let close_rect = Rect::from_center_size(
+                                            pos2(tab_rect.right() - 10.0, tab_rect.center().y),
+                                            vec2(14.0, 14.0),
+                                        );
+                                        let close_resp = tab_ui.interact(close_rect, tab_ui.id().with(("tab_close", i)), Sense::click());
+                                        if close_resp.hovered() {
+                                            p.rect_filled(close_rect, 2.0, t.control_hover);
+                                        }
+                                        if active || hovered || close_resp.hovered() {
+                                            let arm = 3.5;
+                                            let c = close_rect.center();
+                                            let x_col = if close_resp.hovered() { t.text } else { t.text_dim };
+                                            p.line_segment([pos2(c.x - arm, c.y - arm), pos2(c.x + arm, c.y + arm)], Stroke::new(1.2, x_col));
+                                            p.line_segment([pos2(c.x - arm, c.y + arm), pos2(c.x + arm, c.y - arm)], Stroke::new(1.2, x_col));
+                                        }
+                                        if close_resp.clicked() {
+                                            close_clicked = true;
+                                        }
+                                    }
+
+                                    // 标签文本 (超长省略)
+                                    let text_color = if active { t.text } else { t.text_dim };
+                                    let avail_text_w = (tab_w - 12.0 - close_reserve).max(0.0);
+                                    let (galley, cut) = elided(&p, &file.title, font_id.clone(), text_color, avail_text_w);
+                                    let text_pos = pos2(tab_rect.left() + 6.0, tab_rect.center().y - galley.size().y / 2.0);
+                                    p.galley(text_pos, galley, text_color);
+
+                                    let tip = if cut {
+                                        format!("{}\n(点击修改名称)", file.title)
+                                    } else if active {
+                                        "点击修改名称".to_string()
+                                    } else {
+                                        "点击切换标签页".to_string()
+                                    };
+                                    let tab_resp = tab_resp.on_hover_text(tip);
+
+                                    if close_clicked {
+                                        tab_to_close = Some(i);
+                                    } else if tab_resp.clicked() {
+                                        if active {
+                                            start_editing = Some(i);
+                                        } else {
+                                            switch_to = Some(i);
+                                        }
+                                    } else if tab_resp.double_clicked() {
+                                        if !active {
+                                            switch_to = Some(i);
+                                        }
+                                        start_editing = Some(i);
+                                    }
+                                }
+                            }
+
+                            // '+' 新建文档按钮
+                            let (plus_rect, plus_resp) = tab_ui.allocate_exact_size(vec2(26.0, sub_h), Sense::click());
+                            let plus_hovered = plus_resp.hovered();
+                            if plus_hovered {
+                                p.rect_filled(plus_rect, 0.0, t.chrome);
+                            }
+                            let pc = plus_rect.center();
+                            let arm = 4.5;
+                            let plus_col = if plus_hovered { t.text } else { t.text_dim };
+                            p.line_segment([pos2(pc.x - arm, pc.y), pos2(pc.x + arm, pc.y)], Stroke::new(1.4, plus_col));
+                            p.line_segment([pos2(pc.x, pc.y - arm), pos2(pc.x, pc.y + arm)], Stroke::new(1.4, plus_col));
+                            p.vline(plus_rect.right(), plus_rect.y_range(), Stroke::new(1.0, t.border));
+
+                            if plus_resp.on_hover_text("新建文档").clicked() {
+                                create_new = true;
+                            }
+                        });
+                    });
+            },
+        );
+
+        if finish_editing {
+            if let Some(i) = self.editing_tab {
+                if let Some(file) = self.files.get_mut(i) {
+                    let trimmed = file.title.trim().to_string();
+                    file.title = if trimmed.is_empty() {
+                        if i == 0 { "未命名".to_string() } else { format!("未命名{}", i) }
+                    } else {
+                        trimmed
+                    };
+                }
             }
-            sub_x += sub_w + 4.0;
+            self.editing_tab = None;
         }
 
-        if let Some(st) = clicked_sub {
-            self.set_subtab(st);
+        if let Some(i) = tab_to_close {
+            self.close_tab(i);
+        } else if let Some(i) = switch_to {
+            self.switch_to_tab(i);
+            if let Some(edit_i) = start_editing {
+                if edit_i == i {
+                    self.editing_tab = Some(i);
+                    self.just_started_editing = true;
+                }
+            }
+        } else if let Some(i) = start_editing {
+            self.editing_tab = Some(i);
+            self.just_started_editing = true;
+        }
+
+        if create_new {
+            self.create_new_doc();
         }
 
         // --------------------------------------------------------------------
-        // 3. 底部状态与快捷操作栏（清空内容 + 实时字符数统计）
+        // 3. 底部状态与快捷操作栏（“预览”切换按钮 + 实时字符数统计）
         // --------------------------------------------------------------------
         let footer_h = 28.0;
         let footer_rect = Rect::from_min_size(
@@ -352,9 +675,25 @@ impl DocState {
             egui::UiBuilder::new().max_rect(footer_rect.shrink2(vec2(10.0, 4.0))),
             |ui| {
                 ui.horizontal_centered(|ui| {
-                    if ui.small_button("清空内容").clicked() {
-                        self.clear_easymde_content();
+                    let preview_text = egui::RichText::new("预览")
+                        .size(11.5)
+                        .color(if self.is_preview { t.text } else { t.text_dim });
+                    let preview_btn = egui::Button::new(preview_text)
+                        .selected(self.is_preview)
+                        .fill(if self.is_preview { t.tab_active } else { t.chrome_dark })
+                        .stroke(if self.is_preview { Stroke::new(1.2, t.accent) } else { Stroke::new(1.0, t.border) })
+                        .corner_radius(CornerRadius::same(3));
+
+                    let tooltip = if self.is_preview {
+                        "退出预览（当前为按下状态）"
+                    } else {
+                        "预览文档（当前为抬起状态）"
+                    };
+
+                    if ui.add(preview_btn).on_hover_text(tooltip).clicked() {
+                        self.toggle_preview();
                     }
+
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.label(
                             egui::RichText::new(format!("{} 字符", self.get_char_count()))
@@ -378,3 +717,18 @@ impl DocState {
         self.sync_overlay_rect(Some(content_rect));
     }
 }
+
+/// 单行文本根据宽度省略截断函数
+fn elided(p: &egui::Painter, text: &str, font: egui::FontId, color: egui::Color32, max_width: f32) -> (Arc<egui::Galley>, bool) {
+    let mut job = egui::text::LayoutJob::simple_singleline(text.to_string(), font, color);
+    job.wrap = egui::text::TextWrapping {
+        max_width: max_width.max(0.0),
+        max_rows: 1,
+        break_anywhere: true,
+        overflow_character: Some('…'),
+    };
+    let galley = p.layout_job(job);
+    let cut = galley.elided;
+    (galley, cut)
+}
+

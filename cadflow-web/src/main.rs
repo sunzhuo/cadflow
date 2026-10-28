@@ -10,6 +10,8 @@ pub mod buerligons;
 #[cfg(target_arch = "wasm32")]
 pub mod doc_panel;
 #[cfg(target_arch = "wasm32")]
+pub mod doc_icons;
+#[cfg(target_arch = "wasm32")]
 pub mod sidebar;
 #[cfg(target_arch = "wasm32")]
 mod host;
