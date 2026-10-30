@@ -100,7 +100,7 @@ mod web {
         }
 
         fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
-            self.app.raw_input_hook(raw);
+            self.app.raw_input_hook(ctx, raw);
             cadcraft_ui_egui::cmdline::capture_tab(ctx, raw);
         }
 

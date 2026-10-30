@@ -6,8 +6,8 @@
   <title>CADFlow - 数字化工程建模与文档协同平台</title>
   
 <script type="module">
-import init, * as bindings from './cadflow-web-5c9faa4684552700.js';
-const wasm = await init({ module_or_path: './cadflow-web-5c9faa4684552700_bg.wasm' });
+import init, * as bindings from './cadflow-web-1eb6519d5585d3e1.js';
+const wasm = await init({ module_or_path: './cadflow-web-1eb6519d5585d3e1_bg.wasm' });
 
 
 window.wasmBindings = bindings;
@@ -272,7 +272,7 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
       margin: 4px 0;
     }
   </style>
-<link rel="modulepreload" href="./cadflow-web-5c9faa4684552700.js" crossorigin="anonymous" integrity="sha384-Fpms8dRP8aV4Rk7iz36NNzBfgOoFkJW6V15rFxnHJpSQxEUkm2ken6x3HzRZtErY"><link rel="preload" href="./cadflow-web-5c9faa4684552700_bg.wasm" crossorigin="anonymous" integrity="sha384-HDklGrc9YlhP2O+lA98DPUllqbk6GaPhDxeYP+Ij1R1QIEOEOXWxkLdQJqlN6P43" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="./cadflow-web-1eb6519d5585d3e1.js" crossorigin="anonymous" integrity="sha384-gEDZQ4p9Pt8J5NBb6YOAkBA6QKZh9lBs+dZ+l1Mo3JZW/Op8GL/skaJhKe2uXADG"><link rel="modulepreload" href="./snippets/eframe-d31a8450ea12dfc1/inline0.js" crossorigin="anonymous" integrity="sha384-uPZQ72BwgZ4v7Km6+UIFbkDDlt7ShGEsAVEHVN/+wZSGFhItJZB83iKMFQXauTSs"><link rel="preload" href="./cadflow-web-1eb6519d5585d3e1_bg.wasm" crossorigin="anonymous" integrity="sha384-6ZIjWe3DHDCOdDDgVgJ8YoBi6XQ4HwV8EiSJJHyX0hQKlVT2EPgqM5N5tdawlY5c" as="fetch" type="application/wasm"></head>
 <body>
   <canvas id="cadcraft_canvas"></canvas>
   <div id="cadcraft_loading">

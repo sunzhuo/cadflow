@@ -17,8 +17,8 @@ cadcraft-ui-egui = { path = "../cadcraft/crates/ui-egui" }
 cadcraft-io = { path = "../cadcraft/crates/io" }
 cadcraft-doc = { path = "../cadcraft/crates/doc" }
 cadcraft-color = { path = "../cadcraft/crates/color" }
-craft-ui = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "6e7f28518dd1cb57e1624bdc269c3c14316b13ae", features = ["serde"] }
-egui = "0.36"
+craft-ui = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "92d392cff132eaf53e13afff77f38b5c11b73aa0", features = ["serde"] }
+egui = "0.37"
 log = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
@@ -27,7 +27,7 @@ serde_json = { version = "1", features = ["float_roundtrip"] }
 web-sys = { version = "0.3", features = ["HtmlInputElement", "FileList", "File"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-eframe = { version = "0.36", default-features = false, features = ["persistence", "default_fonts", "wgpu", "accesskit"] }
+eframe = { version = "0.37", default-features = false, features = ["persistence", "default_fonts", "wgpu", "accesskit"] }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
