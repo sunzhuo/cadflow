@@ -69,14 +69,61 @@ mod web {
                 }
             }
 
+            self.app.ui.theme = cadcraft_ui_egui::theme::ThemePref::Dark;
             self.app.logic(ctx);
 
-            // 保持中文字体比原默认字体大一号 (Body: 13.5px, Button: 13.5px, Small: 12.0px)，确保与 CADCraft 桌面端视觉比例一致
+            // 应用 CADCraft 深色主题与设计规范，消除边框白线，恢复菜单及对话框设置的深色背景
+            let shown = egui::Theme::Dark;
+            cadcraft_ui_egui::theme::set_active(shown);
+            cadcraft_ui_egui::theme::set_canvas(self.app.options.canvas());
+            cadcraft_ui_egui::theme::apply(ctx, shown, false);
+
+            let t = cadcraft_ui_egui::theme::Tokens::DARK;
             ctx.all_styles_mut(|s| {
+                s.visuals.dark_mode = true;
+                s.visuals.panel_fill = t.panel;
+                s.visuals.window_fill = t.chrome;
+                s.visuals.extreme_bg_color = t.field;
+                s.visuals.faint_bg_color = t.chrome_dark;
+                s.visuals.override_text_color = Some(t.text);
+
+                // 边框使用深色 border，彻底消除白线
+                s.visuals.window_stroke = Stroke::new(1.0, t.border);
+                s.visuals.window_corner_radius = egui::CornerRadius::same(10);
+                s.visuals.menu_corner_radius = egui::CornerRadius::same(10);
+
+                s.visuals.widgets.noninteractive.bg_fill = t.panel;
+                s.visuals.widgets.noninteractive.fg_stroke.color = t.text;
+                s.visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, t.border);
+
+                s.visuals.widgets.inactive.bg_fill = t.control;
+                s.visuals.widgets.inactive.weak_bg_fill = t.control;
+                s.visuals.widgets.inactive.fg_stroke.color = t.text;
+                s.visuals.widgets.inactive.bg_stroke = Stroke::NONE;
+
+                s.visuals.widgets.hovered.bg_fill = t.control_hover;
+                s.visuals.widgets.hovered.weak_bg_fill = t.control_hover;
+                s.visuals.widgets.hovered.fg_stroke.color = t.text;
+                s.visuals.widgets.hovered.bg_stroke = Stroke::NONE;
+
+                s.visuals.widgets.active.bg_fill = t.accent;
+                s.visuals.widgets.active.weak_bg_fill = t.accent;
+                s.visuals.widgets.active.fg_stroke.color = t.text;
+                s.visuals.widgets.active.bg_stroke = Stroke::NONE;
+
+                s.visuals.widgets.open.bg_fill = t.control;
+                s.visuals.widgets.open.weak_bg_fill = t.control;
+                s.visuals.widgets.open.fg_stroke.color = t.text;
+                s.visuals.widgets.open.bg_stroke = Stroke::NONE;
+
+                s.visuals.selection.bg_fill = t.select_bg;
+
+                // 保持中文字体比原默认字体大一号 (Body: 13.5px, Button: 13.5px, Small: 12.0px)，确保与 CADCraft 桌面端视觉比例一致
                 s.text_styles.insert(egui::TextStyle::Body, egui::FontId::proportional(13.5));
                 s.text_styles.insert(egui::TextStyle::Button, egui::FontId::proportional(13.5));
                 s.text_styles.insert(egui::TextStyle::Small, egui::FontId::proportional(12.0));
             });
+            ctx.set_visuals_of(egui::Theme::Light, ctx.style_of(egui::Theme::Dark).visuals.clone());
 
             // 在 CadApp::logic 完成后注册中文字体（避免被其初次 install_fonts 覆盖）
             if !self.font_installed
@@ -388,6 +435,7 @@ mod web {
                             app.load_prefs(&prefs);
                         }
 
+                        app.ui.theme = cadcraft_ui_egui::theme::ThemePref::Dark;
                         app.ui.interface_language = cadcraft_ui_egui::i18n::Preference::Chinese;
                         app.ui.docking = initial_docking_workspace();
 

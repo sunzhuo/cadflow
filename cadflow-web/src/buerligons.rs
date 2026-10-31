@@ -128,12 +128,15 @@ pub fn draw_collapsed_menu(
 
     style.visuals.widgets.inactive.weak_bg_fill = Color32::TRANSPARENT;
     style.visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, t.text);
+    style.visuals.widgets.inactive.bg_stroke = Stroke::NONE;
     style.visuals.widgets.hovered.weak_bg_fill = t.control_hover.gamma_multiply(0.6);
     style.visuals.widgets.hovered.bg_stroke = Stroke::NONE;
     style.visuals.widgets.hovered.corner_radius = CornerRadius::same(6);
     style.visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, t.text);
     style.visuals.widgets.active.weak_bg_fill = t.control;
+    style.visuals.widgets.active.bg_stroke = Stroke::NONE;
     style.visuals.widgets.open.weak_bg_fill = t.control;
+    style.visuals.widgets.open.bg_stroke = Stroke::NONE;
     ui.set_style(style);
 
     ui.spacing_mut().interact_size = vec2(96.0, TOOL_SIZE);
