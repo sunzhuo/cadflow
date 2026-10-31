@@ -15,6 +15,7 @@ cadcraft-engine = { path = "../cadcraft/crates/engine" }
 cadcraft-geom = { path = "../cadcraft/crates/geom" }
 cadcraft-ui-egui = { path = "../cadcraft/crates/ui-egui" }
 cadcraft-io = { path = "../cadcraft/crates/io" }
+cadcraft-dxf = { path = "../cadcraft/crates/dxf" }
 cadcraft-doc = { path = "../cadcraft/crates/doc" }
 cadcraft-color = { path = "../cadcraft/crates/color" }
 craft-ui = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "92d392cff132eaf53e13afff77f38b5c11b73aa0", features = ["serde"] }

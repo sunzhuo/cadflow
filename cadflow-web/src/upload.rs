@@ -117,11 +117,18 @@ impl Inbox {
         self.ctx.request_repaint();
     }
 
-    /// Open what arrived since the last frame (or report why it couldn't be read).
-    pub fn drain(&self, app: &mut CadApp) {
+    /// Open what arrived since the last frame and extract CADFlow documentation if present.
+    pub fn drain_with_docs(&self, app: &mut CadApp, doc_state: &mut crate::doc_panel::DocState) {
         for upload in self.files.take() {
             match upload {
-                Ok((name, bytes)) => app.open_bytes(&name, &bytes),
+                Ok((name, bytes)) => {
+                    if let Some(payload) = crate::dxf_doc::extract_cadflow_documents(&bytes) {
+                        doc_state.load_payload(payload);
+                    } else {
+                        doc_state.clear();
+                    }
+                    app.open_bytes(&name, &bytes);
+                }
                 Err(e) => app.open_failed(e),
             }
         }

@@ -117,25 +117,66 @@ impl Default for DocState {
 
 impl DocState {
     pub fn new() -> Self {
-        let default_title = "未命名".to_string();
-        let default_content = DEFAULT_DOC_TEMPLATE.to_string();
         Self {
-            files: vec![DocFile {
-                title: default_title.clone(),
-                content: default_content.clone(),
-            }],
+            files: Vec::new(),
             active_index: 0,
             next_file_number: 1,
             is_preview: false,
             editing_tab: None,
             just_started_editing: false,
-            title: default_title,
-            content: default_content,
+            title: String::new(),
+            content: String::new(),
             sub_tab: DocSubTab::Edit,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             overlay_mounted: false,
         }
+    }
+
+    /// 导出所有文档数据用于打包序列化
+    pub fn export_payload(&mut self) -> crate::dxf_doc::CadflowDocsPayload {
+        if !self.files.is_empty() {
+            let current_text = self.get_content();
+            if let Some(active_file) = self.files.get_mut(self.active_index) {
+                active_file.content = current_text;
+            }
+        }
+        crate::dxf_doc::CadflowDocsPayload {
+            version: 1,
+            files: self.files.iter().map(|f| crate::dxf_doc::DocFilePayload {
+                title: f.title.clone(),
+                content: f.content.clone(),
+            }).collect(),
+            active_index: self.active_index,
+        }
+    }
+
+    /// 从反序列化的数据中加载文档列表并更新编辑器
+    pub fn load_payload(&mut self, payload: crate::dxf_doc::CadflowDocsPayload) {
+        self.files = payload.files.into_iter().map(|f| DocFile {
+            title: f.title,
+            content: f.content,
+        }).collect();
+        self.active_index = if self.files.is_empty() {
+            0
+        } else {
+            payload.active_index.min(self.files.len() - 1)
+        };
+        self.editing_tab = None;
+        self.next_file_number = self.files.len() + 1;
+        let content = self.files.get(self.active_index).map(|f| f.content.as_str()).unwrap_or("");
+        self.set_easymde_content(content);
+    }
+
+    /// 清空所有文档
+    pub fn clear(&mut self) {
+        self.files.clear();
+        self.active_index = 0;
+        self.next_file_number = 1;
+        self.editing_tab = None;
+        self.title.clear();
+        self.content.clear();
+        self.set_easymde_content("");
     }
 
     /// 执行来自顶部工具栏的 Markdown 编辑操作 (通过 EasyMDE 实例 API 实现)
@@ -308,18 +349,29 @@ impl DocState {
         self.set_easymde_content(&target_content);
     }
 
-    /// 关闭指定索引的文件标签页（当文件数大于1时）
+    /// 关闭指定索引的文件标签页
     pub fn close_tab(&mut self, index: usize) {
-        if self.files.len() <= 1 || index >= self.files.len() {
+        if index >= self.files.len() {
             return;
         }
 
         let is_closing_active = index == self.active_index;
+        self.files.remove(index);
+
+        if self.files.is_empty() {
+            self.active_index = 0;
+            self.editing_tab = None;
+            self.title.clear();
+            self.content.clear();
+            self.set_easymde_content("");
+            return;
+        }
+
         let new_active = if index < self.active_index {
-            self.active_index - 1
+            self.active_index.saturating_sub(1)
         } else if index == self.active_index {
-            if index >= self.files.len() - 1 {
-                self.active_index.saturating_sub(1)
+            if index >= self.files.len() {
+                self.files.len().saturating_sub(1)
             } else {
                 self.active_index
             }
@@ -327,7 +379,6 @@ impl DocState {
             self.active_index
         };
 
-        self.files.remove(index);
         self.active_index = new_active.min(self.files.len() - 1);
         self.editing_tab = None;
 
@@ -377,7 +428,7 @@ impl DocState {
             let Ok(textarea) = document.create_element("textarea") else { return };
             let Ok(textarea) = textarea.dyn_into::<web_sys::HtmlTextAreaElement>() else { return };
             textarea.set_id("doc-easymde-textarea");
-            let initial_content = self.files.get(self.active_index).map(|f| f.content.as_str()).unwrap_or(DEFAULT_DOC_TEMPLATE);
+            let initial_content = self.files.get(self.active_index).map(|f| f.content.as_str()).unwrap_or("");
             textarea.set_value(initial_content);
 
             if overlay_div.append_child(&textarea).is_err() {
@@ -472,7 +523,7 @@ impl DocState {
             title_rect.center(),
             egui::Align2::CENTER_CENTER,
             "文档",
-            egui::FontId::proportional(13.0),
+            egui::FontId::proportional(13.5),
             t.text,
         );
 
@@ -499,8 +550,8 @@ impl DocState {
                     .show(tab_ui, |tab_ui| {
                         tab_ui.horizontal(|tab_ui| {
                             tab_ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
-                            let font_id = egui::FontId::proportional(12.0);
-                            let closable = self.files.len() > 1;
+                            let font_id = egui::FontId::proportional(13.5);
+                            let closable = !self.files.is_empty();
 
                             for (i, file) in self.files.iter_mut().enumerate() {
                                 let active = self.active_index == i;
@@ -684,13 +735,16 @@ impl DocState {
                         .stroke(if self.is_preview { Stroke::new(1.2, t.accent) } else { Stroke::new(1.0, t.border) })
                         .corner_radius(CornerRadius::same(3));
 
-                    let tooltip = if self.is_preview {
+                    let preview_resp = ui.add_enabled(!self.files.is_empty(), preview_btn);
+                    let tooltip = if self.files.is_empty() {
+                        "暂无文档"
+                    } else if self.is_preview {
                         "退出预览（当前为按下状态）"
                     } else {
                         "预览文档（当前为抬起状态）"
                     };
 
-                    if ui.add(preview_btn).on_hover_text(tooltip).clicked() {
+                    if preview_resp.on_hover_text(tooltip).clicked() {
                         self.toggle_preview();
                     }
 
@@ -714,7 +768,19 @@ impl DocState {
         );
         ui.allocate_rect(content_rect, Sense::hover());
 
-        self.sync_overlay_rect(Some(content_rect));
+        if self.files.is_empty() {
+            self.sync_overlay_rect(None);
+            p.rect_filled(content_rect, 0.0, t.panel);
+            p.text(
+                content_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                "暂无文档，点击上方 '+' 新建文档",
+                egui::FontId::proportional(13.0),
+                t.text_dim,
+            );
+        } else {
+            self.sync_overlay_rect(Some(content_rect));
+        }
     }
 }
 

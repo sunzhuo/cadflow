@@ -678,6 +678,7 @@ version = "0.7.0"
 dependencies = [
  "cadcraft-color",
  "cadcraft-doc",
+ "cadcraft-dxf",
  "cadcraft-engine",
  "cadcraft-geom",
  "cadcraft-io",

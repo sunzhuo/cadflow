@@ -24,8 +24,8 @@ pub const TOOL_CORNER_RADIUS: u8 = 7;
 pub const TOOL_SPACING: f32 = 2.0;
 
 // 侧边栏按钮宽度与最小宽度限制 (保证收起与滑动时与恢复按钮间距不小于 TOOL_SPACING)
-pub const SIDEBAR_DEFAULT_WIDTH: f32 = 288.0;
-pub const SIDEBAR_MIN_WIDTH: f32 = 226.0;
+pub const SIDEBAR_DEFAULT_WIDTH: f32 = 318.0;
+pub const SIDEBAR_MIN_WIDTH: f32 = 308.0;
 pub const SIDEBAR_MAX_WIDTH: f32 = 560.0;
 
 // 文档侧边栏宽度限制 (确保容纳全部工具栏编辑按钮，Req 10)
@@ -107,6 +107,7 @@ fn render_menu_entry(ui: &mut Ui, e: &Entry, clicked: &mut Option<String>) {
 pub fn draw_collapsed_menu(
     ui: &mut Ui,
     app: &mut CadApp,
+    doc_state: &mut crate::doc_panel::DocState,
     show_help_dialog: &mut bool,
 ) {
     let t = Tokens::get();
@@ -176,6 +177,17 @@ pub fn draw_collapsed_menu(
     if let Some(id) = clicked {
         if id == "cadflow_help" {
             *show_help_dialog = true;
+        } else if id == "new" || id == "qnew" || id == "ui.newtemplate" {
+            app.session.docs.clear();
+            let _ = app.run("new", serde_json::json!({}));
+            if let Ok(st) = app.session.state_mut() {
+                st.set_view_quiet(cadcraft_engine::View {
+                    center: cadcraft_geom::Vec2::new(0.0, 0.0),
+                    height: 100.0,
+                });
+            }
+            doc_state.clear();
+            crate::dxf_doc::set_current_docs(doc_state.export_payload());
         } else {
             menus::activate(app, &id);
         }
@@ -486,12 +498,61 @@ pub fn draw_top_toolbar(
                     vec2(96.0, TOOL_SIZE),
                 )),
                 |ui| {
-                    draw_collapsed_menu(ui, app, show_help_dialog);
+                    draw_collapsed_menu(ui, app, doc_state, show_help_dialog);
                 },
             );
             cursor_x += 96.0 + TOOL_SPACING;
 
             // [2] 分割线
+            ui.scope_builder(
+                egui::UiBuilder::new().max_rect(Rect::from_min_size(
+                    pos2(cursor_x, total_rect.center().y - TOOL_SIZE / 2.0),
+                    vec2(10.0, TOOL_SIZE),
+                )),
+                |ui| {
+                    draw_toolbar_sep(ui);
+                },
+            );
+            cursor_x += 10.0 + TOOL_SPACING;
+
+            // [2.1] 打开文件 (Open)
+            let open_tip = format!("{} ({})", crate::sidebar::tr_ui("Open"), format_shortcut("Cmd+O", mac));
+            ui.scope_builder(
+                egui::UiBuilder::new().max_rect(Rect::from_min_size(
+                    pos2(cursor_x, total_rect.center().y - TOOL_SIZE / 2.0),
+                    vec2(TOOL_SIZE, TOOL_SIZE),
+                )),
+                |ui| {
+                    let open_resp = draw_tool_icon_button(ui, TOOL_SIZE, SUB_ICON_SIZE, false, &open_tip, |p, r| {
+                        icons::paint(p, r, Icon::Open, false);
+                    });
+                    if open_resp.clicked() {
+                        clicked_cad_cmd = Some("open");
+                    }
+                },
+            );
+            cursor_x += TOOL_SIZE + TOOL_SPACING;
+
+            // [2.2] 保存/另存 (Save / Save As) - 按钮提示显示为：保存/另存，右键点击另存为
+            ui.scope_builder(
+                egui::UiBuilder::new().max_rect(Rect::from_min_size(
+                    pos2(cursor_x, total_rect.center().y - TOOL_SIZE / 2.0),
+                    vec2(TOOL_SIZE, TOOL_SIZE),
+                )),
+                |ui| {
+                    let save_resp = draw_tool_icon_button(ui, TOOL_SIZE, SUB_ICON_SIZE, false, "保存/另存", |p, r| {
+                        icons::paint(p, r, Icon::Save, false);
+                    });
+                    if save_resp.clicked() {
+                        clicked_cad_cmd = Some("qsave");
+                    } else if save_resp.secondary_clicked() {
+                        clicked_cad_cmd = Some("saveas");
+                    }
+                },
+            );
+            cursor_x += TOOL_SIZE + TOOL_SPACING;
+
+            // 分割线
             ui.scope_builder(
                 egui::UiBuilder::new().max_rect(Rect::from_min_size(
                     pos2(cursor_x, total_rect.center().y - TOOL_SIZE / 2.0),

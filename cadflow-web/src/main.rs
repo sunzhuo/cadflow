@@ -3,6 +3,8 @@
 //! Web CAD with full Chinese interface and unrestricted Markdown documentation panel.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+pub mod dxf_doc;
+
 #[cfg(target_arch = "wasm32")]
 pub mod download;
 #[cfg(target_arch = "wasm32")]
@@ -28,6 +30,7 @@ mod web {
     use craft_ui::docking::{Layout, Node};
     use egui::Stroke;
     use wasm_bindgen::JsCast as _;
+    use crate::dxf_doc::{get_current_docs, set_current_docs};
 
     const CANVAS_ID: &str = "cadcraft_canvas";
     const LOADING_ID: &str = "cadcraft_loading";
@@ -48,25 +51,63 @@ mod web {
         font_data: Option<Arc<egui::FontData>>,
         font_installed: bool,
         opened_windows: std::collections::HashMap<egui::LayerId, egui::emath::TSTransform>,
+        last_untitled_counter: u32,
+    }
+
+    impl Shell {
+        fn reset_to_new_drawing(&mut self) {
+            self.app.session.docs.clear();
+            let _ = self.app.run("new", serde_json::json!({}));
+            self.last_untitled_counter = self.app.session.untitled_counter;
+            if let Ok(st) = self.app.session.state_mut() {
+                st.set_view_quiet(cadcraft_engine::View {
+                    center: cadcraft_geom::Vec2::new(0.0, 0.0),
+                    height: 100.0,
+                });
+            }
+            self.doc_state.clear();
+            set_current_docs(self.doc_state.export_payload());
+        }
     }
 
     impl eframe::App for Shell {
         fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
             self.inbox.take_dropped(ctx);
-            self.inbox.drain(&mut self.app);
+            self.inbox.drain_with_docs(&mut self.app, &mut self.doc_state);
+            set_current_docs(self.doc_state.export_payload());
             self.app.system_animations = self.reduced_motion.as_ref().map(|reduced| !reduced.matches());
 
-            // 保持无标签页并直显当前绘图
-            self.app.ui.show_file_tabs = false;
-            self.app.ui.start_tab = false;
-            if self.app.session.docs.is_empty() {
-                let _ = self.app.run("new", serde_json::json!({}));
+            // 快捷键 Ctrl+N / Cmd+N 新建文件拦截
+            let is_new_shortcut = ctx.input_mut(|i| {
+                i.consume_key(egui::Modifiers::COMMAND, egui::Key::N)
+            });
+            if is_new_shortcut {
+                self.reset_to_new_drawing();
+            } else if self.app.session.untitled_counter != self.last_untitled_counter {
+                // 监听命令栏 new/qnew 等操作触发的新建图纸
+                self.last_untitled_counter = self.app.session.untitled_counter;
+                if self.app.session.docs.len() > 1 {
+                    let latest = self.app.session.docs.pop();
+                    self.app.session.docs.clear();
+                    if let Some(doc) = latest {
+                        self.app.session.docs.push(doc);
+                    }
+                }
                 if let Ok(st) = self.app.session.state_mut() {
                     st.set_view_quiet(cadcraft_engine::View {
                         center: cadcraft_geom::Vec2::new(0.0, 0.0),
                         height: 100.0,
                     });
                 }
+                self.doc_state.clear();
+                set_current_docs(self.doc_state.export_payload());
+            }
+
+            // 保持无标签页并直显当前绘图
+            self.app.ui.show_file_tabs = false;
+            self.app.ui.start_tab = false;
+            if self.app.session.docs.is_empty() {
+                self.reset_to_new_drawing();
             }
 
             self.app.ui.theme = cadcraft_ui_egui::theme::ThemePref::Dark;
@@ -371,11 +412,25 @@ mod web {
         eframe::WebLogger::init(log::LevelFilter::Info).ok();
         cadcraft_engine::cmd::file::set_io(cadcraft_engine::cmd::file::IoHooks {
             read: |b, name| cadcraft_io::read(b, name).map_err(|e| e.to_string()),
-            write: |d, name| cadcraft_io::write(d, name).map_err(|e| e.to_string()),
+            write: |d, name| {
+                let bytes = cadcraft_io::write(d, name).map_err(|e| e.to_string())?;
+                if let Some(payload) = get_current_docs() {
+                    let injected = crate::dxf_doc::inject_cadflow_documents(&bytes, &payload);
+                    Ok(injected)
+                } else {
+                    Ok(bytes)
+                }
+            },
             plot: Some(|d, space, opts| cadcraft_io::plotter::plot(d, space, opts).map_err(|e| e.to_string())),
         });
         cadcraft_engine::cmd::file::set_write_as(|d, name, o| {
-            cadcraft_io::write_with(d, name, &cadcraft_io::SaveOptions { version: o.version, binary: o.binary }).map_err(|e| e.to_string())
+            let bytes = cadcraft_io::write_with(d, name, &cadcraft_io::SaveOptions { version: o.version, binary: o.binary }).map_err(|e| e.to_string())?;
+            if let Some(payload) = get_current_docs() {
+                let injected = crate::dxf_doc::inject_cadflow_documents(&bytes, &payload);
+                Ok(injected)
+            } else {
+                Ok(bytes)
+            }
         });
         cadcraft_engine::cmd::file::set_entity_codec(cadcraft_engine::cmd::file::EntityCodec {
             groups: cadcraft_io::entity_groups,
@@ -479,6 +534,7 @@ mod web {
                         });
                         let reduced_motion = web_sys::window().and_then(|w| w.match_media("(prefers-reduced-motion: reduce)").ok().flatten());
 
+                        let untitled_counter = app.session.untitled_counter;
                         Ok(Box::new(Shell {
                             app,
                             inbox,
@@ -494,6 +550,7 @@ mod web {
                             font_data,
                             font_installed: false,
                             opened_windows: std::collections::HashMap::new(),
+                            last_untitled_counter: untitled_counter,
                         }))
                     }),
                 )
