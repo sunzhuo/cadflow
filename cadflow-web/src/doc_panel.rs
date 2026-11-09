@@ -96,6 +96,7 @@ pub const DEFAULT_DOC_TEMPLATE: &str = r#"# 数字化工程设计与技术说明
 
 pub struct DocState {
     pub files: Vec<DocFile>,
+    pub sim_scripts: Vec<crate::dxf_doc::DocFilePayload>,
     pub active_index: usize,
     pub next_file_number: usize,
     pub is_preview: bool,
@@ -119,6 +120,7 @@ impl DocState {
     pub fn new() -> Self {
         Self {
             files: Vec::new(),
+            sim_scripts: Vec::new(),
             active_index: 0,
             next_file_number: 1,
             is_preview: false,
@@ -133,7 +135,12 @@ impl DocState {
         }
     }
 
-    /// 导出所有文档数据用于打包序列化
+    /// 获取仿真场景 JS 脚本（从隐藏的仿真脚本集合中提取，不展示在文档侧边栏）
+    pub fn get_sim_scene_js(&self) -> Option<&str> {
+        self.sim_scripts.iter().find(|f| f.title == "scene.js" || f.title.ends_with(".js")).map(|f| f.content.as_str())
+    }
+
+    /// 导出所有文档数据用于打包序列化（合并 Markdown 文档与仿真脚本）
     pub fn export_payload(&mut self) -> crate::dxf_doc::CadflowDocsPayload {
         if !self.files.is_empty() {
             let current_text = self.get_content();
@@ -141,19 +148,24 @@ impl DocState {
                 active_file.content = current_text;
             }
         }
+        let mut all_files: Vec<crate::dxf_doc::DocFilePayload> = self.files.iter().map(|f| crate::dxf_doc::DocFilePayload {
+            title: f.title.clone(),
+            content: f.content.clone(),
+        }).collect();
+        all_files.extend(self.sim_scripts.clone());
+
         crate::dxf_doc::CadflowDocsPayload {
             version: 1,
-            files: self.files.iter().map(|f| crate::dxf_doc::DocFilePayload {
-                title: f.title.clone(),
-                content: f.content.clone(),
-            }).collect(),
+            files: all_files,
             active_index: self.active_index,
         }
     }
 
-    /// 从反序列化的数据中加载文档列表并更新编辑器
+    /// 从反序列化的数据中加载文档列表并更新编辑器（过滤掉 JS 仿真脚本，仅在文档侧边栏展示 Markdown）
     pub fn load_payload(&mut self, payload: crate::dxf_doc::CadflowDocsPayload) {
-        self.files = payload.files.into_iter().map(|f| DocFile {
+        let (js_files, md_files): (Vec<_>, Vec<_>) = payload.files.into_iter().partition(|f| f.title.ends_with(".js"));
+        self.sim_scripts = js_files;
+        self.files = md_files.into_iter().map(|f| DocFile {
             title: f.title,
             content: f.content,
         }).collect();
@@ -166,17 +178,20 @@ impl DocState {
         self.next_file_number = self.files.len() + 1;
         let content = self.files.get(self.active_index).map(|f| f.content.as_str()).unwrap_or("");
         self.set_easymde_content(content);
+        crate::dxf_doc::set_current_docs(self.export_payload());
     }
 
     /// 清空所有文档
     pub fn clear(&mut self) {
         self.files.clear();
+        self.sim_scripts.clear();
         self.active_index = 0;
         self.next_file_number = 1;
         self.editing_tab = None;
         self.title.clear();
         self.content.clear();
         self.set_easymde_content("");
+        crate::dxf_doc::set_current_docs(self.export_payload());
     }
 
     /// 执行来自顶部工具栏的 Markdown 编辑操作 (通过 EasyMDE 实例 API 实现)

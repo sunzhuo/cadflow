@@ -184,6 +184,7 @@ pub fn draw_collapsed_menu(
                 st.set_view_quiet(cadcraft_engine::View {
                     center: cadcraft_geom::Vec2::new(0.0, 0.0),
                     height: 100.0,
+                    twist: 0.0,
                 });
             }
             doc_state.clear();
@@ -337,6 +338,20 @@ impl Default for PlaybackState {
     }
 }
 
+pub fn progress_to_speed_num(p: f32) -> f64 {
+    if p >= 0.98 {
+        f64::INFINITY
+    } else if p <= 0.01 {
+        0.1
+    } else if p < 0.35 {
+        let t = (p - 0.01) / 0.34;
+        (0.1 + (5.0 - 0.1) * t) as f64
+    } else {
+        let t = (p - 0.35) / 0.63;
+        (5.0 + (50.0 - 5.0) * t) as f64
+    }
+}
+
 pub fn progress_to_speed_text(p: f32) -> String {
     if p >= 0.98 {
         "MAX".to_string()
@@ -463,6 +478,7 @@ pub fn draw_top_toolbar(
     doc_width: &mut f32,
     doc_state: &mut crate::doc_panel::DocState,
     show_help_dialog: &mut bool,
+    sim: &mut crate::sim_overlay::SimController,
 ) {
     let t = Tokens::get();
     let mac = ui.ctx().os().is_mac();
@@ -745,15 +761,16 @@ pub fn draw_top_toolbar(
                                     let mut playback_state = ui.data_mut(|d| d.get_temp::<PlaybackState>(playback_id)).unwrap_or_default();
 
                                     // [1] 播放 / 暂停按钮 (点击切换状态)
-                                    let play_tip = if playback_state.is_playing { "暂停" } else { "播放" };
+                                    let is_active_playing = sim.is_running && !sim.is_paused;
+                                    let play_tip = if is_active_playing { "暂停" } else { "播放" };
                                     let play_resp = draw_tool_icon_button(
                                         ui,
                                         TOOL_SIZE,
                                         MAIN_ICON_SIZE,
-                                        playback_state.is_playing,
+                                        is_active_playing,
                                         play_tip,
                                         |p, rect| {
-                                            let icon = if playback_state.is_playing {
+                                            let icon = if is_active_playing {
                                                 crate::doc_icons::DocIcon::Pause
                                             } else {
                                                 crate::doc_icons::DocIcon::Play
@@ -762,7 +779,18 @@ pub fn draw_top_toolbar(
                                         },
                                     );
                                     if play_resp.clicked() {
-                                        playback_state.is_playing = !playback_state.is_playing;
+                                        if is_active_playing {
+                                            sim.pause();
+                                            playback_state.is_playing = false;
+                                        } else if sim.is_paused {
+                                            sim.resume();
+                                            playback_state.is_playing = true;
+                                        } else {
+                                            let scene_js = doc_state.get_sim_scene_js();
+                                            let speed = progress_to_speed_num(playback_state.speed_progress);
+                                            sim.start(scene_js, speed, 12345);
+                                            playback_state.is_playing = true;
+                                        }
                                     }
 
                                     // [2] 停止按钮
@@ -777,6 +805,7 @@ pub fn draw_top_toolbar(
                                         },
                                     );
                                     if stop_resp.clicked() {
+                                        sim.stop();
                                         playback_state.is_playing = false;
                                     }
 
@@ -786,7 +815,12 @@ pub fn draw_top_toolbar(
                                     ui.add_space(2.0);
 
                                     // [4] 进度条 / 速度滑块
+                                    let prev_p = playback_state.speed_progress;
                                     draw_speed_slider(ui, &mut playback_state.speed_progress);
+                                    if (prev_p - playback_state.speed_progress).abs() > 0.001 {
+                                        let speed = progress_to_speed_num(playback_state.speed_progress);
+                                        sim.set_speed(speed);
+                                    }
                                     ui.add_space(2.0);
 
                                     // [5] 速度文本展示 (初始 5x，最小 0.1x，最大 MAX)
@@ -832,6 +866,8 @@ pub fn draw_top_toolbar(
                                                     ] {
                                                         if ui.button(label).clicked() {
                                                             playback_state.speed_progress = preset_p;
+                                                            let speed = progress_to_speed_num(preset_p);
+                                                            sim.set_speed(speed);
                                                         }
                                                     }
                                                 });
@@ -883,6 +919,9 @@ pub fn draw_top_toolbar(
                 if cmd == "cadflow.help" {
                     *show_help_dialog = true;
                 } else {
+                    if cmd == "qsave" || cmd == "saveas" {
+                        crate::dxf_doc::set_current_docs(doc_state.export_payload());
+                    }
                     app.start(cmd);
                 }
             }

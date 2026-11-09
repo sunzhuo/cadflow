@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["cadflow-web"]
+members = ["cadflow-web", "cadflow-sim"]
 exclude = ["cadcraft"]
 
 [patch.crates-io]

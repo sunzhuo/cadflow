@@ -16,6 +16,8 @@ pub mod doc_icons;
 #[cfg(target_arch = "wasm32")]
 pub mod sidebar;
 #[cfg(target_arch = "wasm32")]
+pub mod sim_overlay;
+#[cfg(target_arch = "wasm32")]
 mod host;
 #[cfg(target_arch = "wasm32")]
 mod upload;
@@ -52,6 +54,8 @@ mod web {
         font_installed: bool,
         opened_windows: std::collections::HashMap<egui::LayerId, egui::emath::TSTransform>,
         last_untitled_counter: u32,
+        sim: crate::sim_overlay::SimController,
+        last_doc_sync_ms: f64,
     }
 
     impl Shell {
@@ -63,6 +67,7 @@ mod web {
                 st.set_view_quiet(cadcraft_engine::View {
                     center: cadcraft_geom::Vec2::new(0.0, 0.0),
                     height: 100.0,
+                    twist: 0.0,
                 });
             }
             self.doc_state.clear();
@@ -72,9 +77,19 @@ mod web {
 
     impl eframe::App for Shell {
         fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+            self.sim.poll_messages();
             self.inbox.take_dropped(ctx);
             self.inbox.drain_with_docs(&mut self.app, &mut self.doc_state);
-            set_current_docs(self.doc_state.export_payload());
+
+            // 快捷键 Ctrl+S / Cmd+S 保存时或低频空闲（每2秒至多一次且仅在文档展开时）同步文档状态
+            // 避免在 60-120fps 滚轮缩放与鼠标漫游时每帧 eval 与克隆堆内存，消除滚轮缩放卡顿
+            let is_save_shortcut = ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::S));
+            let now_ms = js_sys::Date::now();
+            if is_save_shortcut || (self.show_doc_panel && now_ms - self.last_doc_sync_ms > 2000.0) {
+                self.last_doc_sync_ms = now_ms;
+                set_current_docs(self.doc_state.export_payload());
+            }
+
             self.app.system_animations = self.reduced_motion.as_ref().map(|reduced| !reduced.matches());
 
             // 快捷键 Ctrl+N / Cmd+N 新建文件拦截
@@ -97,6 +112,7 @@ mod web {
                     st.set_view_quiet(cadcraft_engine::View {
                         center: cadcraft_geom::Vec2::new(0.0, 0.0),
                         height: 100.0,
+                        twist: 0.0,
                     });
                 }
                 self.doc_state.clear();
@@ -226,6 +242,7 @@ mod web {
                     &mut self.doc_width,
                     &mut self.doc_state,
                     &mut self.show_help_dialog,
+                    &mut self.sim,
                 );
 
                 // 2. 最底端状态栏：贯穿整个页面宽度（跨越左侧边栏、中央绘图区及右侧文档侧边栏，Req 13）
@@ -292,6 +309,10 @@ mod web {
                 egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.canvas)).show(ui, |ui| {
                     if has_doc {
                         cadcraft_ui_egui::docking::show(&mut self.app, ui);
+                        if let (Some(rect), Some(xf)) = (self.app.canvas.rect, self.app.canvas.xf.as_ref()) {
+                            let painter = ui.painter_at(rect);
+                            self.sim.render(&painter, xf);
+                        }
                     } else {
                         cadcraft_ui_egui::chrome::start_page(&mut self.app, ui);
                     }
@@ -506,6 +527,7 @@ mod web {
                                 st.set_view_quiet(cadcraft_engine::View {
                                     center: cadcraft_geom::Vec2::new(0.0, 0.0),
                                     height: 100.0,
+                                    twist: 0.0,
                                 });
                             } else {
                                 let _ = app.session.zoom_extents();
@@ -551,6 +573,8 @@ mod web {
                             font_installed: false,
                             opened_windows: std::collections::HashMap::new(),
                             last_untitled_counter: untitled_counter,
+                            sim: crate::sim_overlay::SimController::default(),
+                            last_doc_sync_ms: 0.0,
                         }))
                     }),
                 )
